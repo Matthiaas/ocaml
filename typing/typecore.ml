@@ -2660,7 +2660,7 @@ and type_expect_
       rue {
         exp_desc = Texp_constant cst;
         exp_loc = loc; exp_extra = [];
-        exp_type = instance Predef.type_string; exp_mode = Alloc_heap; (*FIXME*)
+        exp_type = instance Predef.type_string; exp_mode = mode;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   )
@@ -2669,7 +2669,7 @@ and type_expect_
       rue {
         exp_desc = Texp_constant cst;
         exp_loc = loc; exp_extra = [];
-        exp_type = type_constant cst; exp_mode = Alloc_heap; (*FIXME*)
+        exp_type = type_constant cst; exp_mode = mode;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   | Pexp_let(Nonrecursive,
@@ -3631,6 +3631,7 @@ and type_expect_
         exp_env = env;
       }
   | Pexp_letop{ let_ = slet; ands = sands; body = sbody } ->
+      (* FIXME: allocation modes for binding operators *)
       let rec loop spat_acc ty_acc sands =
         match sands with
         | [] -> spat_acc, ty_acc
