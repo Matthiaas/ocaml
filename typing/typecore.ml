@@ -28,7 +28,7 @@ type type_forcing_context =
   | If_no_else_branch
   | While_loop_conditional
   | While_loop_body
-  | InComprehensionArgument
+  | In_comprehension_argument
   | For_loop_start_index
   | For_loop_stop_index
   | For_loop_body
@@ -3089,7 +3089,7 @@ and type_expect_
         exp_type = instance Predef.type_unit;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
-  | Pexp_list_comprehension (sbody, comp_type) ->  
+  | Pexp_list_comprehension (sbody, comp_typell) ->  
     if !Clflags.principal then begin_def ();
     let without_list_ty = Ctype.newvar ()  in
     unify_exp_types loc env 
@@ -3099,18 +3099,18 @@ and type_expect_
       generalize_structure without_list_ty; 
     end;
 
-    let id, body, comp_type = 
+    let body, comp_type = 
         comprehension ~loc ~env 
         ~ty_expected:(mk_expected without_list_ty) 
-        ~container_type:Predef.type_list ~sbody ~comp_type
+        ~container_type:Predef.type_list ~sbody ~comp_typell
       in
     re {
-      exp_desc = Texp_list_comprehension (id, body, comp_type);
+      exp_desc = Texp_list_comprehension (body, comp_type);
       exp_loc = loc; exp_extra = [];
       exp_type = instance (Predef.type_list body.exp_type);
       exp_attributes = sexp.pexp_attributes;
       exp_env = env }
-  | Pexp_arr_comprehension (sbody, comp_type) -> 
+  | Pexp_arr_comprehension (sbody, comp_typell) -> 
     if !Clflags.principal then begin_def ();
     let without_arr_ty = Ctype.newvar ()  in
     unify_exp_types loc env 
@@ -3120,13 +3120,13 @@ and type_expect_
       generalize_structure without_arr_ty; 
     end;
 
-    let id, body, comp_type = 
+    let body, comp_type = 
         comprehension ~loc ~env 
         ~ty_expected:(mk_expected without_arr_ty) 
-        ~container_type:Predef.type_array ~sbody ~comp_type
+        ~container_type:Predef.type_array ~sbody ~comp_typell
     in 
     re {
-      exp_desc = Texp_arr_comprehension (id, body, comp_type);
+      exp_desc = Texp_arr_comprehension (body, comp_type);
       exp_loc = loc; exp_extra = [];
       exp_type = instance (Predef.type_array body.exp_type);
       exp_attributes = sexp.pexp_attributes;
@@ -5141,28 +5141,46 @@ and type_andops env sarg sands expected_ty =
 
 (*TODO mbungeroth: Why do I need the type annotation here to make this work?*)
   and comprehension ~loc ~env ~ty_expected ~container_type 
-                  ~sbody ~(comp_type : Parsetree.comprehension) = 
-  let from_to_comprehension param slow shigh dir =
+                  ~sbody ~(comp_typell : Parsetree.comprehension list list) = 
+
+  let from_to_comprehension ~body_env ~env param slow shigh dir =
     let low = type_expect env slow
         (mk_expected ~explanation:For_loop_start_index Predef.type_int) in
     let high = type_expect env shigh
         (mk_expected ~explanation:For_loop_stop_index Predef.type_int) in
-    let id, new_env = type_for_loop ~loc ~env ~param  Predef.type_int in
-    let body = type_expect new_env sbody ty_expected in
-    id, body, From_to(param, low, high, dir)
+    let id, new_env = type_for_loop ~loc ~env:body_env ~param  Predef.type_int in
+    (*let body = type_expect new_env sbody ty_expected in*)
+    From_to(id, param, low, high, dir), new_env
   in
-  let in_comprehension param siter= 
+  let in_comprehension ~body_env ~env param siter= 
     let item_ty = newvar() in
     let iter_ty = instance (container_type item_ty) in
-    let iter = type_expect env siter (mk_expected ~explanation:InComprehensionArgument iter_ty) in
-    let id, new_env = type_for_loop ~loc ~env ~param item_ty
+    let iter = type_expect env siter 
+        (mk_expected ~explanation:In_comprehension_argument iter_ty) in
+    let id, new_env = type_for_loop ~loc ~env:body_env ~param item_ty
     in
-    let body = type_expect new_env sbody ty_expected in
-    id, body, In(param, iter)
+    In(id, param, iter), new_env
   in
-  match comp_type  with 
-  | From_to (p,e2,e3, dir) -> from_to_comprehension p e2 e3 dir
-  | In (p, e2) ->  in_comprehension p e2
+  let call (comps, body_env) ~env ~(comp_type : Parsetree.comprehension) = 
+    let comp, env = match comp_type with 
+    | From_to (p,e2,e3, dir) -> from_to_comprehension ~body_env ~env p e2 e3 dir
+    | In (p, e2) ->  in_comprehension ~body_env ~env p e2 in
+    comp::comps, env in 
+ 
+  let comps, new_env = List.fold_right 
+    (fun comp_typel (comps, env) -> 
+        let new_comps, new_env  = 
+            List.fold_right
+                (fun comp_type acc-> call acc ~env ~comp_type ) 
+                comp_typel
+                ([], env)   
+            in
+            new_comps::comps, new_env
+    ) 
+    comp_typell ([], env) 
+  in
+  let body = type_expect new_env sbody ty_expected in
+  body, comps
   
 (* Typing of toplevel bindings *)
 
@@ -5274,7 +5292,7 @@ let report_type_expected_explanation expl ppf =
       because "the condition of a while-loop"
   | While_loop_body ->
       because "the body of a while-loop"
-  | InComprehensionArgument -> 
+  | In_comprehension_argument -> 
     because "the iteration argument of a comprehension"
   | For_loop_start_index ->
       because "a for-loop start index"

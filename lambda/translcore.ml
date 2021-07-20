@@ -152,16 +152,16 @@ let rec push_defaults loc bindings cases partial =
   | _ ->
       cases
 
-let comprehension_prim ~is_array ~dir= 
-  let prefix = if is_array then "array_" else "" in
-  let fun_name =  prefix ^ 
-  match dir with 
+let comprehension_prim ~is_concat ~dir= 
+  let prefix = if is_concat then "concat_" else "" in
+  let suffix = match dir with 
     | Upto ->  "map_from_to"
-    | Downto -> "map_from_downto"  in
+    | Downto -> "map_from_downto"  in 
+  let fun_name =  prefix ^ suffix in
   Lambda.transl_prim "CamlinternalComprehension" fun_name
 
-let list_comp_in_prim ~is_array = 
-  let prefix = if is_array then "array_" else "" in
+let list_comp_in_prim ~is_concat = 
+  let prefix = if is_concat then "concat_" else "" in
   Lambda.transl_prim "CamlinternalComprehension" (prefix ^ "map")
 
 (* Insertion of debugging events *)
@@ -460,52 +460,133 @@ and transl_exp0 ~in_new_scope ~scopes e =
       Lwhile(transl_exp ~scopes cond,
              event_before ~scopes body (transl_exp ~scopes body))
   
-  | Texp_arr_comprehension (param, body, type_comp) -> 
-    let pval, args, func = match type_comp with
-    | From_to (_,e2,e3, dir) -> 
-        Pintval, [transl_exp ~scopes e2; transl_exp ~scopes e3],
-        comprehension_prim ~is_array:true ~dir
-    | In (_, e2) ->  
-        Pgenval, [transl_exp ~scopes e2],
-        list_comp_in_prim ~is_array:true
+  | Texp_arr_comprehension (body, type_comps) -> 
+    let make_array size init= 
+      let prim_make_arr = 
+        Primitive.simple ~name:"caml_make_vect" ~arity:2 ~alloc:true 
+      in
+      Lprim (Pccall prim_make_arr, [size; init], Loc_unknown)
     in
-    let fn = Lfunction {kind = Curried;
-                        params= [param, pval];
-                        return = Typeopt.value_kind body.exp_env body.exp_type;
-                        attr = default_function_attribute;
-                        loc = Loc_unknown;
-                        body = transl_exp ~scopes  body} in
-    Lapply{
-      ap_loc=Loc_unknown;
-      ap_func=func;
-      ap_args= fn::args;
-      ap_tailcall=Default_tailcall;
-      ap_inlined=Default_inline;
-      ap_specialised=Default_specialise;
-    }
-  | Texp_list_comprehension (param, body, type_comp) -> 
-    let pval, args, func = match type_comp with
-    | From_to (_,e2,e3, dir) -> 
-        Pintval, [transl_exp ~scopes e2; transl_exp ~scopes e3],
-        comprehension_prim ~is_array:false ~dir
-    | In (_, e2) ->  
-        Pgenval, [transl_exp ~scopes e2],
-        list_comp_in_prim ~is_array:false
+    let l_array_set arr at v=
+      Lprim( (Parraysets(Pgenarray)), [arr; at; v] ,Loc_unknown) 
     in
-    let fn = Lfunction {kind = Curried;
-                        params= [param, pval];
-                        return = Typeopt.value_kind body.exp_env body.exp_type;
-                        attr = default_function_attribute;
-                        loc = Loc_unknown;
-                        body = transl_exp ~scopes  body} in
-    Lapply{
-      ap_loc=Loc_unknown;
-      ap_func=func;
-      ap_args= fn::args;
-      ap_tailcall=Default_tailcall;
-      ap_inlined=Default_inline;
-      ap_specialised=Default_specialise;
-    }
+    let l_array_get arr at=
+      Lprim( (Parrayrefs(Pgenarray)), [arr; at] ,Loc_unknown) 
+    in
+    let l_int_op op a b = 
+      Lprim( op, [a; b] ,Loc_unknown) in
+    let int n = Lconst (Const_base (Const_int n)) in   
+    let construct_base_body bdy counter=
+      Lsequence( 
+        bdy,
+        Lassign(counter, l_int_op Paddint (int 1) (Lvar(counter)))) 
+    in
+    let rec create_inner_loop ~is_base type_comp ls res counter =
+      match type_comp with 
+      | In (id, _, e2) -> 
+          let in_ = (transl_exp ~scopes e2) in
+          let len = Lprim( (Parraylength(Pgenarray)), [in_], Loc_unknown) in
+          let index = Ident.create_local "index" in    
+          if is_base then
+            let loop = 
+              Lfor(index, (int 0), (l_int_op Psubint len (int 1)), Upto, 
+              construct_base_body (
+                  l_array_set 
+                    (Lvar(res)) 
+                    (Lvar(counter)) 
+                    (Llet(Strict,Pintval, id, 
+                      (l_array_get  in_ (Lvar(index))), 
+                      (transl_exp ~scopes  body)))
+                  ) counter)
+            in 
+            loop, len
+          else 
+            let inner_body, inner_len = nested_for ls res counter in
+            let loop = 
+              Lfor(index, 
+                (int 0), (l_int_op Psubint len (int 1)), Upto, 
+                (Llet(
+                  Strict,Pintval, id, (l_array_get  in_ (Lvar(index))), 
+                  inner_body)))
+            in 
+            loop, l_int_op Pmulint inner_len len
+            
+      | From_to(id, _, e2, e3, dir) ->  
+        let from = (transl_exp ~scopes e2) in
+        let to_ = (transl_exp ~scopes e3) in
+        let low, high = 
+          match dir with 
+          | Upto -> from, to_
+          | Downto -> to_, from in
+        let len =  l_int_op Psubint (l_int_op Paddint high (int 1)) low in
+        if is_base then
+          let loop =
+            Lfor(id,from, to_, dir, 
+              Lsequence( 
+                l_array_set (Lvar(res)) (Lvar(counter)) 
+                  (transl_exp ~scopes  body),
+                Lassign(counter, l_int_op Paddint (int 1) (Lvar(counter))))) 
+          in
+          loop, len
+        else 
+          let inner_body, inner_len = nested_for ls res counter in
+          Lfor(id,from, to_, dir, inner_body), l_int_op Pmulint inner_len len
+             
+    and nested_for type_comps res counter = 
+        match type_comps with 
+        | l::[] -> create_inner_loop ~is_base:true l [] res counter
+        | l::ls -> create_inner_loop ~is_base:false l ls res counter
+        | _ -> assert false 
+    in
+    let res = Ident.create_local "res" in
+    let counter = Ident.create_local "counter" in
+    let for_loop, len = nested_for (List.hd type_comps) res counter in
+    let arr =   make_array (len) (int 0) in                   
+    Llet(Strict, Pgenval, res, arr, 
+      Llet(
+        Variable, Pintval, counter, (int 0), 
+        Lsequence(for_loop, Lvar(res))))    
+
+
+  | Texp_list_comprehension (body, type_comps) -> 
+    (*The left most statement should be at the end of the recursion.*)
+    let type_comps = List.rev (List.concat type_comps) in
+    let return = Typeopt.value_kind body.exp_env body.exp_type in
+    let create type_comp bdy is_concat = 
+      let param, pval, args, func = match type_comp with
+      | From_to (param, _,e2,e3, dir) -> 
+          param, Pintval, [transl_exp ~scopes e2; transl_exp ~scopes e3],
+          comprehension_prim ~is_concat ~dir
+      | In (param, _, e2) ->  
+          param, Pgenval, [transl_exp ~scopes e2],
+          list_comp_in_prim ~is_concat
+      in
+      let fn = Lfunction {kind = Curried;
+                          params= [param, pval];
+                          return = return;
+                          attr = default_function_attribute;
+                          loc = Loc_unknown;
+                          body = bdy} in
+      Lapply{
+        ap_loc=Loc_unknown;
+        ap_func=func;
+        ap_args= fn::args;
+        ap_tailcall=Default_tailcall;
+        ap_inlined=Default_inline;
+        ap_specialised=Default_specialise;
+      }
+    in
+    (* TODO: Instead of reversing and right-folding we left-fold and handle
+       the first iteration seperatly. 
+       Not sure if ist worth it since the code will be (a little )more 
+       complicated and the lists should be pretty short s.t. no-tail-rec is
+       fine. *)
+    let rec iter_comprehension type_comps = 
+        match type_comps with 
+        | l::[] -> create l (transl_exp ~scopes  body) false
+        | l::ls -> create l (iter_comprehension ls) true
+        | _ -> assert false in
+    iter_comprehension type_comps
   | Texp_for(param, _, low, high, dir, body) ->
       Lfor(param, transl_exp ~scopes low, transl_exp ~scopes high, dir,
            event_before ~scopes body (transl_exp ~scopes body))
