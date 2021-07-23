@@ -19,19 +19,9 @@ let map_from_downto f from to_ =
   loop f from to_ [] 
 ;;
 
-let array_map = Array.map
-
-let array_map_from_to f from t =
-  Array.init (t - from + 1) (fun i -> f ( i + from))
-;;
-
-let array_map_from_downto f from t =
-  Array.init (from - t + 1) (fun i -> f ( from - i))
-;;
-
 (* Definitions for recursive usage.*)
 (*
-  TODO: Change 
+  TODO: Change to not use List.concat
 *)
 let concat_map f l = 
   List.concat (List.map f l)
