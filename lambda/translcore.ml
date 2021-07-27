@@ -152,18 +152,23 @@ let rec push_defaults loc bindings cases partial =
   | _ ->
       cases
 
-let comprehension_prim ~is_concat ~dir= 
+let from_to_comp_prim ~is_concat ~dir ~single_loop= 
   let prefix = if is_concat then "concat_" else "" in
-  let suffix = match dir with 
+  let suffix = if single_loop then "" else "_prepend" in
+  let function_name = match dir with 
     | Upto ->  "map_from_to"
     | Downto -> "map_from_downto"  in 
-  let fun_name =  prefix ^ suffix in
+  let fun_name =  String.concat "" [prefix;function_name;suffix] in
   Lambda.transl_prim "CamlinternalComprehension" fun_name
 
-let list_comp_in_prim ~is_concat = 
+let in_from_to_comp_prim ~is_concat ~single_loop = 
   let prefix = if is_concat then "concat_" else "" in
-  Lambda.transl_prim "CamlinternalComprehension" (prefix ^ "map")
+  let suffix = if single_loop then "" else "_prepend" in
+  let fun_name =  String.concat "" [prefix;"map";suffix] in
+  Lambda.transl_prim "CamlinternalComprehension" fun_name
 
+let comp_rev () = 
+  Lambda.transl_prim "CamlinternalComprehension" "rev"
 (* Insertion of debugging events *)
 
 let event_before ~scopes exp lam =
@@ -466,12 +471,19 @@ and transl_exp0 ~in_new_scope ~scopes e =
        I move out? All of them?*)
     (*TODO: Replace Loc_unknown for errors that can occur because of user
       error with something usefull*)
-    let transl_make_array size init= 
-      let transl_prim_make_arr = 
-        (*Todo: What is arity?*)
+    let make_array size init= 
+      let prim_make_arr = 
         Primitive.simple ~name:"caml_make_vect" ~arity:2 ~alloc:true 
       in
-      Lprim (Pccall transl_prim_make_arr, [size; init], Loc_unknown)
+      Lprim (Pccall prim_make_arr, [size; init], Loc_unknown)
+    in
+    let blit_array src src_pos dst dst_pos len= 
+      let prim_blit_arr = 
+        Primitive.simple ~name:"caml_array_blit" ~arity:5 ~alloc:true 
+      in
+      Lprim (
+        Pccall prim_blit_arr, 
+        [src; src_pos; dst; dst_pos; len], Loc_unknown)
     in
     let empty_arr = 
       Lprim( (Pmakearray(Pgenarray, Immutable)), [] ,Loc_unknown) 
@@ -508,16 +520,15 @@ and transl_exp0 ~in_new_scope ~scopes e =
     in
     (*Translates one block into a block of for loops.*)
     let transl_loops block base_body = 
-      let base_loop = transl_loop ~type_comp:(List.hd block) ~body:base_body in
       List.fold_left (fun (body, len) type_comp ->
-        let new_body, new_len = transl_loop ~type_comp ~body in
-        new_body, transl_int_op Pmulint new_len len 
-        ) base_loop (List.tl block)
+          let new_body, new_len = transl_loop ~type_comp ~body in
+          new_body, transl_int_op Pmulint new_len len 
+        ) (base_body, int 1) block
     in       
     (*The block created here is the most inner block. This needs to execute the
-      execute the actual body of the comprehension and write it into the 
-      correct result array.*)   
-    let transl_base_block block gloabl_counter is_only_block =  
+      actual body of the comprehension and write it into the correct result
+      array.*)   
+    let transl_base_block block global_counter =  
       let res = Ident.create_local "res" in
       let counter = Ident.create_local "counter" in
       (*TODO: Can we trust the optimizer to toptimze this variable out?
@@ -528,20 +539,16 @@ and transl_exp0 ~in_new_scope ~scopes e =
       let base_body = Lsequence(  
         Lifthenelse(
           Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], Loc_unknown),
-          Lassign(res, transl_make_array (Lvar(res_length)) transl_body),
+          Lassign(res, make_array (Lvar(res_length)) transl_body),
           lbody),
         Lassign(counter, transl_int_op Paddint (int 1) (Lvar(counter))))
       in
       let base_body_with_global = 
-        if is_only_block then
-          (*If there is only one block then globalcounter equals counter.*) 
-          base_body
-        else 
+        match global_counter with
+        | None -> base_body
+        | Some gc -> 
           Lsequence( 
-            base_body,
-            Lassign(
-              gloabl_counter, transl_int_op Paddint (int 1) 
-              (Lvar(gloabl_counter))))
+            base_body, Lassign(gc, transl_int_op Paddint (int 1) (Lvar(gc))))
       in
       let for_loop, len = transl_loops block base_body_with_global in           
       Llet(Strict, Pintval, res_length, len, 
@@ -560,7 +567,7 @@ and transl_exp0 ~in_new_scope ~scopes e =
           Lassign(counter, transl_int_op Paddint (int 1) (Lvar(counter))))
       in
       let inner_loop, len = transl_loops block base_body in
-      Llet(Variable, Pgenval, arr, transl_make_array (len) empty_arr, 
+      Llet(Variable, Pgenval, arr, make_array (len) empty_arr, 
         Llet(Variable, Pintval, counter, (int 0),
           Lsequence(inner_loop, Lvar(arr))))
     in
@@ -571,17 +578,21 @@ and transl_exp0 ~in_new_scope ~scopes e =
         let i = Ident.create_local "i" in 
         let len = Lprim( (Parraylength(Pgenarray)), [arr], Loc_unknown) in
         if block_count = 1 then
-          Lfor(i, (int 0), (transl_int_op Psubint len (int 1)), Upto, 
-            Lsequence(
-              Lifthenelse(
-                Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], Loc_unknown),
-                Lassign(res, transl_make_array (Lvar(total_len)) 
-                  (transl_array_get arr (Lvar(i)))),
-                  transl_array_set (Lvar(res)) (Lvar(counter))  
-                  (transl_array_get arr (Lvar(i))) 
-                ),
-              Lassign(counter, transl_int_op Paddint (int 1) (Lvar(counter)))
-            ))
+          Lsequence(
+            Lifthenelse(
+              Lprim(Psequand, [
+                Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], Loc_unknown);
+                (*This check protects from trying to acces an empty array.*)
+                Lprim(Pintcomp(Cne), [len; int 0], Loc_unknown)
+              ], Loc_unknown),
+              Lassign(res, make_array (Lvar(total_len)) 
+                (transl_array_get arr (int 0))),
+                lambda_unit
+              ),
+              Lsequence(
+                blit_array arr (int 0) (Lvar(res)) (Lvar(counter)) (len),
+                Lassign(counter, transl_int_op Paddint len (Lvar(counter)))
+              ))
         else 
           let sub_arr = Ident.create_local "sub_arr" in 
           Lfor(i, (int 0), (transl_int_op Psubint len (int 1)), Upto, 
@@ -592,51 +603,91 @@ and transl_exp0 ~in_new_scope ~scopes e =
         Llet(Variable, Pintval, counter, (int 0),  
           Lsequence(transl_for arr block_count, Lvar(res))))
     in
-    let gloabl_counter = Ident.create_local "gloabl_counter" in
     let block_count = List.length blocks in 
-    let base_block = 
-      transl_base_block (List.hd blocks) gloabl_counter (block_count = 1) 
+    let global_counter = 
+      if (block_count = 1)
+      then None
+      else Some(Ident.create_local "global_counter") 
     in
-    (*TODO: We Should be able to get rid of this variable anb just use the 
+    let base_block = 
+      transl_base_block (List.hd blocks).clauses global_counter 
+    in
+    (*TODO: We Should be able to get rid of this variable and just use the 
       most toplevel one created by transl_block. *)
     let arr = Ident.create_local "arr" in 
     let translated_blocks = 
-      List.fold_left transl_block base_block (List.tl blocks) 
+      List.fold_left transl_block base_block 
+        (List.map (fun a -> a.clauses) (List.tl blocks))
     in
-    if block_count = 1 then 
-      (*No need to concat if there is only the base block.*)
-      translated_blocks
-    else
-      Llet(
-        Variable, Pintval, gloabl_counter, int 0,
-        Llet(
-          Strict, Pgenval, arr,
-          translated_blocks,
-          transl_concat_arrays (Lvar(arr)) block_count gloabl_counter
-        ))
+    (match global_counter with
+        | None -> translated_blocks
+        | Some gc -> 
+          Llet(
+            Variable, Pintval, gc, int 0,
+            Llet(
+              Strict, Pgenval, arr,
+              translated_blocks,
+              transl_concat_arrays (Lvar(arr)) block_count gc
+            )))
   | Texp_list_comprehension (body, blocks) -> 
-    (*The left most statement should be at the end of the recursion.*)
-    let block = List.concat blocks in
-    let transl_list_comp type_comp bdy is_concat = 
-      let return = 
-        if is_concat 
-        then Pgenval 
-        else Typeopt.value_kind body.exp_env body.exp_type 
+    let int n = Lconst (Const_base (Const_int n)) in  
+    let block = List.fold_left (fun acc block -> 
+        let rec loop = function 
+          | [] -> assert false 
+          | [last] -> [last, block.guard]
+          | l::ls -> (l, None) :: (loop ls) 
+        in
+        List.concat [List.rev (loop block.clauses); acc]
+        ) [] blocks
+    in
+    let rec transl_list_comp block upper_res= 
+      let res = Ident.create_local "res" in
+      let is_concat, (type_comp, guard), bdy, return =
+        match block with
+        | [last] ->  
+          (* Cons element to the result list.*)
+          let bdy = 
+            Lprim( 
+              (*TODO: change None to usefull P...val*)
+              Pmakeblock(0, Immutable, None), 
+              [(transl_exp ~scopes  body); Lvar(res)], Loc_unknown) 
+          in
+          false, last, bdy, Typeopt.value_kind body.exp_env body.exp_type
+        | el::ls ->  
+          true, el, (transl_list_comp ls (Some (Lvar(res)))), Pgenval
+        | _ -> assert false
       in
-      let param, pval, args, func = match type_comp with
-      | From_to (param, _,e2,e3, dir) -> 
-          param, Pintval, [transl_exp ~scopes e2; transl_exp ~scopes e3],
-          comprehension_prim ~is_concat ~dir
-      | In (param, _, e2) ->  
-          param, Pgenval, [transl_exp ~scopes e2],
-          list_comp_in_prim ~is_concat
+      let bdy =   
+        match guard with 
+        | None -> bdy
+        | Some guard -> Lifthenelse((transl_exp ~scopes  guard), bdy, Lvar(res))  
       in
-      let fn = Lfunction {kind = Curried;
-                          params= [param, pval];
-                          return = return;
-                          attr = default_function_attribute;
-                          loc = Loc_unknown;
-                          body = bdy} in
+      (*Single loop optimization makes sure we dont create a list that has
+        to be reversed. We directly create the correct list.*)
+      (*There is no upper res if there is only a single loop.*)
+      let args =  match upper_res with
+        | None -> [] 
+        | Some ur -> [ur] 
+      in
+      let single_loop = Option.is_none upper_res in
+      let param, pval, args, func =
+        match type_comp with
+        | From_to (param, _,e2,e3, dir) -> 
+            param, Pintval, 
+              (transl_exp ~scopes e2)::(transl_exp ~scopes e3)::args,
+              from_to_comp_prim ~is_concat ~single_loop ~dir
+        | In (param, _, e2) ->  
+            param, Pgenval, (transl_exp ~scopes e2)::args,
+              in_from_to_comp_prim ~is_concat ~single_loop
+      in
+      let fn = 
+        Lfunction {kind = Curried;
+                  params= (param, pval)::[res, Pgenval];
+                  return = return;
+                  attr = default_function_attribute;
+                  loc = Loc_unknown;
+                  body = bdy} 
+      in
       Lapply{
         ap_loc=Loc_unknown;
         ap_func=func;
@@ -646,11 +697,17 @@ and transl_exp0 ~in_new_scope ~scopes e =
         ap_specialised=Default_specialise;
       }
     in
-    let base_loop = 
-      transl_list_comp (List.hd block) (transl_exp ~scopes  body) false 
-    in
-    List.fold_left 
-      (fun acc el -> transl_list_comp el acc true) base_loop (List.tl block)
+    if (List.length block) = 1 then 
+      transl_list_comp block None
+    else
+      Lapply{
+          ap_loc=Loc_unknown;
+          ap_func=comp_rev ();
+          ap_args=[transl_list_comp block (Some (int 0))]; (*Some []*)
+          ap_tailcall=Default_tailcall;
+          ap_inlined=Default_inline;
+          ap_specialised=Default_specialise;
+        }
   | Texp_for(param, _, low, high, dir, body) ->
       Lfor(param, transl_exp ~scopes low, transl_exp ~scopes high, dir,
            event_before ~scopes body (transl_exp ~scopes body))

@@ -331,8 +331,10 @@ and expression_desc =
         (* E1; E2 *)
   | Pexp_while of expression * expression
         (* while E1 do E2 done *)
-  | Pexp_list_comprehension of expression * comprehension list list
-  | Pexp_arr_comprehension of  expression * comprehension list list
+  | Pexp_list_comprehension of 
+      expression * comprehension list 
+  | Pexp_arr_comprehension of  
+      expression * comprehension list 
   | Pexp_for of
       pattern *  expression * expression * direction_flag * expression
         (* for i = E1 to E2 do E3 done      (flag = Upto)
@@ -387,7 +389,13 @@ and expression_desc =
         (* [%id] *)
   | Pexp_unreachable
         (* . *)
-and comprehension = 
+
+and comprehension =
+   { 
+      clauses: comprehension_clause list;
+      guard : expression option 
+   }
+and comprehension_clause = 
   (*[ body for i = E2 to E3 ]      (flag = Upto)
     [ body for i = E2 downto E3 ]  (flag = downto)*)
   | From_to of pattern * expression * expression * direction_flag

@@ -2310,20 +2310,25 @@ simple_expr:
       { unclosed "(" $loc($1) ")" $loc($6) }
 ;
 
-inner_comprehension:
+comprehension_clause:
 |  ext_attributes pattern EQUAL simple_expr direction_flag simple_expr
       { From_to($2, $4, $6, $5) }
 |  ext_attributes pattern IN simple_expr { In($2, $4) }
 ;
 
+comprehension_block: 
+| separated_nonempty_llist(AND, comprehension_clause) 
+      { {clauses= $1; guard=None} }
+| separated_nonempty_llist(AND, comprehension_clause) WHEN simple_expr 
+      { {clauses= $1; guard= Some $3} }
+
+
 %inline comprehension_expr:
 | LBRACKET simple_expr FOR 
-    separated_nonempty_llist(FOR, 
-        separated_nonempty_llist(AND, inner_comprehension)) RBRACKET
+    separated_nonempty_llist(FOR, comprehension_block) RBRACKET
       { Pexp_list_comprehension($2, $4) }
 | LBRACKETBAR simple_expr FOR 
-    separated_nonempty_llist(FOR, 
-        separated_nonempty_llist(AND, inner_comprehension)) BARRBRACKET
+    separated_nonempty_llist(FOR, comprehension_block) BARRBRACKET
       { Pexp_arr_comprehension($2, $4) }
 
 %inline simple_expr_:

@@ -249,9 +249,9 @@ and expression_desc =
   | Texp_sequence of expression * expression
   | Texp_while of expression * expression
   | Texp_list_comprehension of 
-      expression * comprehension list list
+      expression * comprehension list
   | Texp_arr_comprehension of 
-      expression * comprehension list list
+      expression * comprehension list
   | Texp_for of
       Ident.t * Parsetree.pattern * expression * expression * direction_flag *
         expression
@@ -284,10 +284,17 @@ and meth =
     Tmeth_name of string
   | Tmeth_val of Ident.t
 
-and comprehension = 
-  | From_to of Ident.t * Parsetree.pattern * expression * expression * direction_flag
-  | In of Ident.t * Parsetree.pattern * expression
+  and comprehension =
+  { 
+     clauses: comprehension_clause list;
+     guard : expression option 
+  }
 
+and comprehension_clause = 
+ | From_to of Ident.t * Parsetree.pattern * 
+     expression * expression * direction_flag
+ | In of Ident.t * Parsetree.pattern * expression
+ 
 and 'k case =
     {
      c_lhs: 'k general_pattern;

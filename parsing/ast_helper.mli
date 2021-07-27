@@ -160,9 +160,9 @@ module Exp:
     val while_: ?loc:loc -> ?attrs:attrs -> expression -> expression
                 -> expression
     val list_comprehension: ?loc:loc -> ?attrs:attrs -> expression 
-                            -> comprehension list list -> expression
+                            -> comprehension list -> expression
     val arr_comprehension: ?loc:loc -> ?attrs:attrs -> expression 
-                           -> comprehension list list -> expression
+                           -> comprehension list -> expression
     val for_: ?loc:loc -> ?attrs:attrs -> pattern -> expression -> expression
               -> direction_flag -> expression -> expression
     val coerce: ?loc:loc -> ?attrs:attrs -> expression -> core_type option

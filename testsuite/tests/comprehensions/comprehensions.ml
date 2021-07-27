@@ -229,3 +229,31 @@ val y : int array array array =
   ("4", 4); ("5", 5); ("6", 5); ("5", 6); ("6", 6); ("7", 7); ("8", 7);
   ("7", 8); ("8", 8)|]
 |}];;
+
+
+(*Testcase with empty intermediate array.*)
+[|  ( j * 3 + i)  for i = 0 to (j-1) for j = 0 to 2|];;
+[%%expect{|
+- : int array = [|3; 6; 7|]
+|}];;
+
+
+
+(* When clauses*)
+
+[(j,i) for j = 0 to i when (i >= 4 && j >= 4) for i = 0 to 9 when (i mod 2 = 0)];;
+[%%expect{|
+- : (int * int) list =
+[(4, 4); (4, 6); (5, 6); (6, 6); (4, 8); (5, 8); (6, 8); (7, 8); (8, 8)]
+|}];;
+
+
+
+[ (j,i) for j = 0 to i when (i > 4) for i = 0 to 10 when (j = 0) ];;
+[%%expect{|
+Line 1, characters 58-59:
+1 | [ (j,i) for j = 0 to i when (i > 4) for i = 0 to 10 when (j = 0) ];;
+                                                              ^
+Error: Unbound value j
+|}];;
+
