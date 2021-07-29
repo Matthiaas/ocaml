@@ -1,10 +1,7 @@
 (* TEST
    * expect
 *)
-
-
 (*Type checking tests.*)
-
 true::[i for i = 10 downto 0];;
 [%%expect{|
 Line 1, characters 7-8:
@@ -13,7 +10,6 @@ Line 1, characters 7-8:
 Error: This expression has type int but an expression was expected of type
          bool
 |}];;
-
 
 module M = struct type t = A | B end;;
 let x : M.t list  = [A for i = 1 to 1];;
@@ -41,7 +37,6 @@ Warning 18 [not-principal]: this type-based constructor disambiguation is not pr
 - : M.t list = [M.B; M.A]
 |}];;
 
-
 let y = 10;;
 [i for i in y];;
 [%%expect{|
@@ -64,7 +59,6 @@ Line 2, characters 7-8:
 Error: This expression has type int but an expression was expected of type
          bool
 |}];;
-
 
 let y = [[1]];;
 true::[i for i in z for z in y];;
@@ -94,12 +88,10 @@ Error: Unbound value z
 - : int list = [0; 1; 2; 3; 4; 5; 6; 7; 8; 9; 10]
 |}];;
 
-
 [i for i = 10 downto 0];;
 [%%expect{|
 - : int list = [10; 9; 8; 7; 6; 5; 4; 3; 2; 1; 0]
 |}];;
-
 
 let y = [1;2;3];;
 [i for i in y];;
@@ -118,7 +110,6 @@ val y : int list = [0; 1; 2; 3]
  40; 41; 42; 43; 44; 45; 46; 47; 48; 49; 50; 51; 52; 53; 54; 55; 56; 57; 58;
  59; 60; 61; 62; 63]
 |}];;
-
 
 let y = [0;1;2;3];;
 [ (k*4*4 + j*4 + i) for i in y and j in y and k in y];;
@@ -178,8 +169,6 @@ val y : int array = [|0; 1; 2; 3|]
 |}];;
 
 
-
-
 [| (k*4*4 + j*4 + i) for i = 0 to 3 and j = 0 to 3  for k = 0 to 3 |];;
 [%%expect{|
 - : int array =
@@ -188,7 +177,6 @@ val y : int array = [|0; 1; 2; 3|]
   40; 41; 42; 43; 44; 45; 46; 47; 48; 49; 50; 51; 52; 53; 54; 55; 56; 57; 58;
   59; 60; 61; 62; 63|]
 |}];;
-
 
 [| (float_of_int (k*4*4 + j*4 + i)) for i = 0 to 3 and j = 0 to 3  for k = 0 to 3 |];;
 [%%expect{|
@@ -199,7 +187,6 @@ val y : int array = [|0; 1; 2; 3|]
   47.; 48.; 49.; 50.; 51.; 52.; 53.; 54.; 55.; 56.; 57.; 58.; 59.; 60.; 61.;
   62.; 63.|]
 |}];;
-
 
 let y = [| [| [| 1;2;|]; [| 3;4; |] |]; [| [| 5;6;|]; [| 7;8; |] |] |];;
 [| i for i in x for x in z for z in y |];;
@@ -237,8 +224,6 @@ val y : int array array array =
 - : int array = [|3; 6; 7|]
 |}];;
 
-
-
 (* When clauses*)
 
 [(j,i) for j = 0 to i when (i >= 4 && j >= 4) for i = 0 to 9 when (i mod 2 = 0)];;
@@ -247,7 +232,11 @@ val y : int array array array =
 [(4, 4); (4, 6); (5, 6); (6, 6); (4, 8); (5, 8); (6, 8); (7, 8); (8, 8)]
 |}];;
 
-
+[| (j,i) for j = 0 to i when (i >= 4 && j >= 4) for i = 0 to 9 when (i mod 2 = 0) |];;
+[%%expect{|
+- : (int * int) array =
+[|(4, 4); (4, 6); (5, 6); (6, 6); (4, 8); (5, 8); (6, 8); (7, 8); (8, 8)|]
+|}];;
 
 [ (j,i) for j = 0 to i when (i > 4) for i = 0 to 10 when (j = 0) ];;
 [%%expect{|
@@ -255,5 +244,94 @@ Line 1, characters 58-59:
 1 | [ (j,i) for j = 0 to i when (i > 4) for i = 0 to 10 when (j = 0) ];;
                                                               ^
 Error: Unbound value j
+|}];;
+
+[| (i,j) for i = 0 to 10 when (i mod 2 = 0) for j = 0 to 5 when (j = 1 || j = 2)|];;
+[%%expect{|
+- : (int * int) array =
+[|(0, 1); (2, 1); (4, 1); (6, 1); (8, 1); (10, 1); (0, 2); (2, 2); (4, 2);
+  (6, 2); (8, 2); (10, 2)|]
+|}];;
+
+[| (i) for i = 0 to 10 when (i mod 2 = 0)|];;
+[%%expect{|
+- : int array = [|0; 2; 4; 6; 8; 10|]
+|}];;
+
+[ (i,j,k) for i = 0 to 5 when (i mod 2 = 0)  for j = 0 to 5 when (j mod 2 = 0)  for k = 0 to 5 when (k mod 2 = 0)];;
+[%%expect{|
+- : (int * int * int) list =
+[(0, 0, 0); (2, 0, 0); (4, 0, 0); (0, 2, 0); (2, 2, 0); (4, 2, 0); (0, 4, 0);
+ (2, 4, 0); (4, 4, 0); (0, 0, 2); (2, 0, 2); (4, 0, 2); (0, 2, 2); (2, 2, 2);
+ (4, 2, 2); (0, 4, 2); (2, 4, 2); (4, 4, 2); (0, 0, 4); (2, 0, 4); (4, 0, 4);
+ (0, 2, 4); (2, 2, 4); (4, 2, 4); (0, 4, 4); (2, 4, 4); (4, 4, 4)]
+|}];;
+
+[| (i,j,k) for i = 0 to 5 when (i mod 2 = 0)  for j = 0 to 5 when (j mod 2 = 0)  for k = 0 to 5 when (k mod 2 = 0)|];;
+[%%expect{|
+- : (int * int * int) array =
+[|(0, 0, 0); (2, 0, 0); (4, 0, 0); (0, 2, 0); (2, 2, 0); (4, 2, 0);
+  (0, 4, 0); (2, 4, 0); (4, 4, 0); (0, 0, 2); (2, 0, 2); (4, 0, 2);
+  (0, 2, 2); (2, 2, 2); (4, 2, 2); (0, 4, 2); (2, 4, 2); (4, 4, 2);
+  (0, 0, 4); (2, 0, 4); (4, 0, 4); (0, 2, 4); (2, 2, 4); (4, 2, 4);
+  (0, 4, 4); (2, 4, 4); (4, 4, 4)|]
+|}];;
+
+[ (i,j,k) for i = 0 to 5  and j = 0 to 5 and k = 0 to 5 when ((k mod 2 = 0) && (i mod 2 = 0) && (j mod 2 = 0))];;
+[%%expect{|
+- : (int * int * int) list =
+[(0, 0, 0); (2, 0, 0); (4, 0, 0); (0, 2, 0); (2, 2, 0); (4, 2, 0); (0, 4, 0);
+ (2, 4, 0); (4, 4, 0); (0, 0, 2); (2, 0, 2); (4, 0, 2); (0, 2, 2); (2, 2, 2);
+ (4, 2, 2); (0, 4, 2); (2, 4, 2); (4, 4, 2); (0, 0, 4); (2, 0, 4); (4, 0, 4);
+ (0, 2, 4); (2, 2, 4); (4, 2, 4); (0, 4, 4); (2, 4, 4); (4, 4, 4)]
+|}];;
+
+[| (i,j,k) for i = 0 to 5  and j = 0 to 5 and k = 0 to 5 when ((k mod 2 = 0) && (i mod 2 = 0) && (j mod 2 = 0)  )|];;
+[%%expect{|
+- : (int * int * int) array =
+[|(0, 0, 0); (2, 0, 0); (4, 0, 0); (0, 2, 0); (2, 2, 0); (4, 2, 0);
+  (0, 4, 0); (2, 4, 0); (4, 4, 0); (0, 0, 2); (2, 0, 2); (4, 0, 2);
+  (0, 2, 2); (2, 2, 2); (4, 2, 2); (0, 4, 2); (2, 4, 2); (4, 4, 2);
+  (0, 0, 4); (2, 0, 4); (4, 0, 4); (0, 2, 4); (2, 2, 4); (4, 2, 4);
+  (0, 4, 4); (2, 4, 4); (4, 4, 4)|]
+|}];;
+
+[| (i,j,k) for i = 0 to 5 when ((k mod 2 = 0) && (i mod 2 = 0) && (j mod 2 = 0)) for j = 0 to 5 for k = 0 to 5 |];;
+[%%expect{|
+- : (int * int * int) array =
+[|(0, 0, 0); (2, 0, 0); (4, 0, 0); (0, 2, 0); (2, 2, 0); (4, 2, 0);
+  (0, 4, 0); (2, 4, 0); (4, 4, 0); (0, 0, 2); (2, 0, 2); (4, 0, 2);
+  (0, 2, 2); (2, 2, 2); (4, 2, 2); (0, 4, 2); (2, 4, 2); (4, 4, 2);
+  (0, 0, 4); (2, 0, 4); (4, 0, 4); (0, 2, 4); (2, 2, 4); (4, 2, 4);
+  (0, 4, 4); (2, 4, 4); (4, 4, 4)|]
+|}];;
+
+let f f =
+  [ (f i j k) for i = 0 to 3 when (i mod 2 = 0)  for j = 0 to 3 when (j mod 2 = 0)  for k = 0 to 3 when (k mod 2 = 0)];;
+[%%expect{|
+val f : (int -> int -> int -> 'a) -> 'a list = <fun>
+|}];;
+
+f (fun i j k -> (i,j,k) )
+[%%expect{|
+- : (int * int * int) list =
+[(0, 0, 0); (2, 0, 0); (0, 2, 0); (2, 2, 0); (0, 0, 2); (2, 0, 2); (0, 2, 2);
+ (2, 2, 2)]
+|}];;
+
+f (fun i j k -> i )
+[%%expect{|
+- : int list = [0; 2; 0; 2; 0; 2; 0; 2]
+|}];;
+
+f (fun i j k -> float_of_int i )
+[%%expect{|
+- : float list = [0.; 2.; 0.; 2.; 0.; 2.; 0.; 2.]
+|}];;
+
+f (fun i j k -> [|string_of_int i|] )
+[%%expect{|
+- : string array list =
+[[|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]]
 |}];;
 

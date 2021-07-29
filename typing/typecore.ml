@@ -5135,6 +5135,7 @@ and type_andops env sarg sands expected_ty =
   in
   let let_arg, rev_ands = loop env sarg (List.rev sands) expected_ty in
   let_arg, List.rev rev_ands
+    
 
   and type_comprehension_clause ~body_env ~env ~loc ~container_type
       ~(comp_type : Parsetree.comprehension_clause) = 
@@ -5153,9 +5154,28 @@ and type_andops env sarg sands expected_ty =
       let iter_ty = instance (container_type item_ty) in
       let iter = type_expect env siter 
           (mk_expected ~explanation:In_comprehension_argument iter_ty) in
-      let id, new_env = type_for_loop_index ~loc ~env:body_env ~param item_ty
+      let pat =
+        type_pat Value ~no_existentials:In_self_pattern (ref env) param item_ty 
       in
-      In(id, param, iter), new_env
+      let pv = !pattern_variables in
+      pattern_variables := [];
+      let new_env = 
+        List.fold_right
+          (fun {pv_id; pv_type; pv_loc; pv_as_var; pv_attributes}
+              env ->
+            Env.add_value pv_id
+              { val_type = pv_type;
+                val_attributes = pv_attributes;
+                val_kind = Val_reg; (*Todo: what is this?*)
+                val_loc = pv_loc;
+                val_uid = Uid.mk ~current_unit:(Env.get_unit_name ());
+              } env
+              (*Todo: this does not give unnused warnings yet.*)
+              ~check:(fun s -> if pv_as_var then Warnings.Unused_var s
+                else Warnings.Unused_var_strict s))
+        pv body_env
+      in
+      In(pat, iter), new_env
     in
     comp, env
 

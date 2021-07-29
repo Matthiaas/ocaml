@@ -235,7 +235,7 @@ let expr sub {exp_extra; exp_desc; exp_env; _} =
         List.iter (fun type_comp -> 
           match type_comp with
           | From_to (_, _,e2,e3, _) -> sub.expr sub e2; sub.expr sub e3
-          | In (_, _, e2) -> sub.expr sub e2 
+          | In (_, e2) -> sub.expr sub e2 
           ) clauses;
         Option.iter (fun g -> sub.expr sub g) guard)
       type_comps

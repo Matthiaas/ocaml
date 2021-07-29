@@ -29,6 +29,15 @@ type error =
     Free_super_var
   | Unreachable_reached
 
+type comp_block =
+  | Unguarded of lambda * array_kind
+  | Guarded of lambda * array_kind * int
+
+type arrays =
+  | Array_of_elements
+  | Array_of_arrays of arrays
+  | Array_of_filtered_arrays of arrays
+
 exception Error of Location.t * error
 
 let use_dup_for_constant_arrays_bigger_than = 4
@@ -152,23 +161,18 @@ let rec push_defaults loc bindings cases partial =
   | _ ->
       cases
 
-let from_to_comp_prim ~is_concat ~dir ~single_loop= 
-  let prefix = if is_concat then "concat_" else "" in
-  let suffix = if single_loop then "" else "_prepend" in
+let from_to_comp_prim ~dir= 
   let function_name = match dir with 
-    | Upto ->  "map_from_to"
-    | Downto -> "map_from_downto"  in 
-  let fun_name =  String.concat "" [prefix;function_name;suffix] in
-  Lambda.transl_prim "CamlinternalComprehension" fun_name
+    | Upto ->  "map_from_to_cons"
+    | Downto -> "map_from_downto_cons"  in 
+  Lambda.transl_prim "CamlinternalComprehension" function_name
 
-let in_from_to_comp_prim ~is_concat ~single_loop = 
-  let prefix = if is_concat then "concat_" else "" in
-  let suffix = if single_loop then "" else "_prepend" in
-  let fun_name =  String.concat "" [prefix;"map";suffix] in
-  Lambda.transl_prim "CamlinternalComprehension" fun_name
+let in_comp_prim () = 
+  Lambda.transl_prim "CamlinternalComprehension" "map_cons"
 
 let comp_rev () = 
   Lambda.transl_prim "CamlinternalComprehension" "rev"
+
 (* Insertion of debugging events *)
 
 let event_before ~scopes exp lam =
@@ -467,247 +471,73 @@ and transl_exp0 ~in_new_scope ~scopes e =
   
   | Texp_arr_comprehension (body, blocks) -> 
     (*One block consists of comprehension statements connected by "and".*)
-    (* TODO: Move some of the transl methods out? Which ones shoudl 
-       I move out? All of them?*)
-    (*TODO: Replace Loc_unknown for errors that can occur because of user
-      error with something usefull*)
-    let make_array size init= 
-      let prim_make_arr = 
-        Primitive.simple ~name:"caml_make_vect" ~arity:2 ~alloc:true 
-      in
-      Lprim (Pccall prim_make_arr, [size; init], Loc_unknown)
-    in
-    let blit_array src src_pos dst dst_pos len= 
-      let prim_blit_arr = 
-        Primitive.simple ~name:"caml_array_blit" ~arity:5 ~alloc:true 
-      in
-      Lprim (
-        Pccall prim_blit_arr, 
-        [src; src_pos; dst; dst_pos; len], Loc_unknown)
-    in
-    let empty_arr = 
-      Lprim( (Pmakearray(Pgenarray, Immutable)), [] ,Loc_unknown) 
-    in 
-    let transl_array_set arr at v=
-      Lprim( (Parraysets(Pgenarray)), [arr; at; v] ,Loc_unknown) 
-    in
-    let transl_array_get arr at=
-      Lprim( (Parrayrefs(Pgenarray)), [arr; at] ,Loc_unknown) 
-    in
-    let transl_int_op op a b = Lprim( op, [a; b] ,Loc_unknown) in
-    let int n = Lconst (Const_base (Const_int n)) in   
-    let transl_loop ~type_comp ~body =
-      match type_comp with 
-      | In (id, _, e2) -> 
-        let in_ = (transl_exp ~scopes e2) in
-        let len = Lprim( (Parraylength(Pgenarray)), [in_], Loc_unknown) in
-        let index = Ident.create_local "index" in    
-        Lfor(index, (int 0), (transl_int_op Psubint len (int 1)), Upto, 
-            Llet(
-            Strict,Pintval, id, transl_array_get  in_ (Lvar(index)),
-            body)), len
-      | From_to(id, _, e2, e3, dir) ->  
-        let from = (transl_exp ~scopes e2) in
-        let to_ = (transl_exp ~scopes e3) in
-        let low, high = 
-          match dir with 
-          | Upto -> from, to_
-          | Downto -> to_, from in
-        let len = 
-          transl_int_op Psubint (transl_int_op Paddint high (int 1)) low 
-        in
-        Lfor(id,from, to_, dir, body), len
-    in
-    (*Translates one block into a block of for loops.*)
-    let transl_loops block base_body = 
-      List.fold_left (fun (body, len) type_comp ->
-          let new_body, new_len = transl_loop ~type_comp ~body in
-          new_body, transl_int_op Pmulint new_len len 
-        ) (base_body, int 1) block
-    in       
-    (*The block created here is the most inner block. This needs to execute the
-      actual body of the comprehension and write it into the correct result
-      array.*)   
-    let transl_base_block block global_counter =  
-      let res = Ident.create_local "res" in
-      let counter = Ident.create_local "counter" in
-      (*TODO: Can we trust the optimizer to toptimze this variable out?
-        Also we should be able to inline this ourselfs*)
-      let res_length = Ident.create_local "len" in
-      let transl_body = transl_exp ~scopes  body in
-      let lbody = transl_array_set (Lvar(res)) (Lvar(counter)) transl_body in 
-      let base_body = Lsequence(  
-        Lifthenelse(
-          Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], Loc_unknown),
-          Lassign(res, make_array (Lvar(res_length)) transl_body),
-          lbody),
-        Lassign(counter, transl_int_op Paddint (int 1) (Lvar(counter))))
-      in
-      let base_body_with_global = 
-        match global_counter with
-        | None -> base_body
-        | Some gc -> 
-          Lsequence( 
-            base_body, Lassign(gc, transl_int_op Paddint (int 1) (Lvar(gc))))
-      in
-      let for_loop, len = transl_loops block base_body_with_global in           
-      Llet(Strict, Pintval, res_length, len, 
-        Llet(Variable, Pgenval, res, empty_arr, 
-          Llet(Variable, Pintval, counter, (int 0), 
-            Lsequence(for_loop, Lvar(res)))))    
-    in
-    (* The block created here takes the result of the innerblock and 
-       writes it into the array of arrays (arr).*)
-    let transl_block  inner_block block=  
-      let arr = Ident.create_local "arr" in
-      let counter = Ident.create_local "counter" in
-      let base_body = 
-        Lsequence(
-          transl_array_set (Lvar(arr)) (Lvar(counter)) inner_block,
-          Lassign(counter, transl_int_op Paddint (int 1) (Lvar(counter))))
-      in
-      let inner_loop, len = transl_loops block base_body in
-      Llet(Variable, Pgenval, arr, make_array (len) empty_arr, 
-        Llet(Variable, Pintval, counter, (int 0),
-          Lsequence(inner_loop, Lvar(arr))))
-    in
-    let transl_concat_arrays arr block_count total_len = 
-      let res = Ident.create_local "res" in
-      let counter = Ident.create_local "counter" in
-      let rec transl_for arr block_count= 
-        let i = Ident.create_local "i" in 
-        let len = Lprim( (Parraylength(Pgenarray)), [arr], Loc_unknown) in
-        if block_count = 1 then
-          Lsequence(
-            Lifthenelse(
-              Lprim(Psequand, [
-                Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], Loc_unknown);
-                (*This check protects from trying to acces an empty array.*)
-                Lprim(Pintcomp(Cne), [len; int 0], Loc_unknown)
-              ], Loc_unknown),
-              Lassign(res, make_array (Lvar(total_len)) 
-                (transl_array_get arr (int 0))),
-                lambda_unit
-              ),
-              Lsequence(
-                blit_array arr (int 0) (Lvar(res)) (Lvar(counter)) (len),
-                Lassign(counter, transl_int_op Paddint len (Lvar(counter)))
-              ))
-        else 
-          let sub_arr = Ident.create_local "sub_arr" in 
-          Lfor(i, (int 0), (transl_int_op Psubint len (int 1)), Upto, 
-            Llet(Strict, Pgenval, sub_arr, transl_array_get arr (Lvar(i)),
-              transl_for (Lvar(sub_arr)) (block_count - 1)))
-      in 
-      Llet(Strict, Pgenval, res, empty_arr,
-        Llet(Variable, Pintval, counter, (int 0),  
-          Lsequence(transl_for arr block_count, Lvar(res))))
-    in
-    let block_count = List.length blocks in 
-    let global_counter = 
-      if (block_count = 1)
-      then None
-      else Some(Ident.create_local "global_counter") 
-    in
-    let base_block = 
-      transl_base_block (List.hd blocks).clauses global_counter 
-    in
-    (*TODO: We Should be able to get rid of this variable and just use the 
-      most toplevel one created by transl_block. *)
-    let arr = Ident.create_local "arr" in 
-    let translated_blocks = 
-      List.fold_left transl_block base_block 
-        (List.map (fun a -> a.clauses) (List.tl blocks))
-    in
-    (match global_counter with
-        | None -> translated_blocks
-        | Some gc -> 
-          Llet(
-            Variable, Pintval, gc, int 0,
-            Llet(
-              Strict, Pgenval, arr,
-              translated_blocks,
-              transl_concat_arrays (Lvar(arr)) block_count gc
-            )))
+    let loc = (of_location ~scopes e.exp_loc) in
+    let array_kind = Typeopt.array_kind e in
+    transl_arr_comprehension body blocks ~array_kind ~scopes ~loc
   | Texp_list_comprehension (body, blocks) -> 
+    let loc = of_location ~scopes e.exp_loc in
     let int n = Lconst (Const_base (Const_int n)) in  
-    let block = List.fold_left (fun acc block -> 
-        let rec loop = function 
-          | [] -> assert false 
-          | [last] -> [last, block.guard]
-          | l::ls -> (l, None) :: (loop ls) 
-        in
-        List.concat [List.rev (loop block.clauses); acc]
-        ) [] blocks
-    in
-    let rec transl_list_comp block upper_res= 
-      let res = Ident.create_local "res" in
-      let is_concat, (type_comp, guard), bdy, return =
-        match block with
-        | [last] ->  
-          (* Cons element to the result list.*)
-          let bdy = 
-            Lprim( 
-              (*TODO: change None to usefull P...val*)
-              Pmakeblock(0, Immutable, None), 
-              [(transl_exp ~scopes  body); Lvar(res)], Loc_unknown) 
-          in
-          false, last, bdy, Typeopt.value_kind body.exp_env body.exp_type
-        | el::ls ->  
-          true, el, (transl_list_comp ls (Some (Lvar(res)))), Pgenval
-        | _ -> assert false
-      in
-      let bdy =   
-        match guard with 
-        | None -> bdy
-        | Some guard -> Lifthenelse((transl_exp ~scopes  guard), bdy, Lvar(res))  
-      in
-      (*Single loop optimization makes sure we dont create a list that has
-        to be reversed. We directly create the correct list.*)
-      (*There is no upper res if there is only a single loop.*)
-      let args =  match upper_res with
-        | None -> [] 
-        | Some ur -> [ur] 
-      in
-      let single_loop = Option.is_none upper_res in
-      let param, pval, args, func =
+    let transl_list_comp type_comp body acc_var = 
+      let new_acc = Ident.create_local "acc" in
+      let param, pval, args, func, body =
         match type_comp with
         | From_to (param, _,e2,e3, dir) -> 
             param, Pintval, 
-              (transl_exp ~scopes e2)::(transl_exp ~scopes e3)::args,
-              from_to_comp_prim ~is_concat ~single_loop ~dir
-        | In (param, _, e2) ->  
-            param, Pgenval, (transl_exp ~scopes e2)::args,
-              in_from_to_comp_prim ~is_concat ~single_loop
+            [transl_exp ~scopes e2; transl_exp ~scopes e3; Lvar(new_acc)],
+            from_to_comp_prim ~dir,
+            body
+        | In (pat, e2) ->  
+            let pat_id = Ident.create_local "pat" in
+            pat_id , Pgenval,
+            [transl_exp ~scopes e2; Lvar(new_acc)],
+            in_comp_prim (),
+            Matching.for_let ~scopes pat.pat_loc (Lvar(pat_id)) pat body
       in
       let fn = 
         Lfunction {kind = Curried;
-                  params= (param, pval)::[res, Pgenval];
-                  return = return;
+                  params= (param, pval)::[acc_var, Pgenval];
+                  return = Pgenval;
                   attr = default_function_attribute;
-                  loc = Loc_unknown;
-                  body = bdy} 
+                  loc = loc;
+                  body = body} 
       in
       Lapply{
-        ap_loc=Loc_unknown;
+        ap_loc=loc;
         ap_func=func;
         ap_args= fn::args;
         ap_tailcall=Default_tailcall;
         ap_inlined=Default_inline;
         ap_specialised=Default_specialise;
-      }
+      }, new_acc
     in
-    if (List.length block) = 1 then 
-      transl_list_comp block None
-    else
+    let acc_var = Ident.create_local "acc" in
+    let bdy = 
+      Lprim( 
+        Pmakeblock(0, Immutable, None), 
+        [(transl_exp ~scopes  body); Lvar(acc_var)], loc) 
+    in
+    let res_list, res_var = List.fold_left 
+      (fun (body, acc_var)  block -> 
+        let body = 
+          match block.guard with 
+          | None -> body
+          | Some guard -> 
+            Lifthenelse((transl_exp ~scopes  guard), body, Lvar(acc_var))  
+        in
+        List.fold_left 
+          (fun (body, acc_var) el -> transl_list_comp el body acc_var) 
+          (body, acc_var) block.clauses)
+      (bdy, acc_var) blocks
+    in
+    Llet(Alias, Pgenval, res_var, int 0, (*Empty list.*)
       Lapply{
-          ap_loc=Loc_unknown;
+          ap_loc=loc;
           ap_func=comp_rev ();
-          ap_args=[transl_list_comp block (Some (int 0))]; (*Some []*)
+          ap_args=[res_list]; 
           ap_tailcall=Default_tailcall;
           ap_inlined=Default_inline;
           ap_specialised=Default_specialise;
-        }
+        })
   | Texp_for(param, _, low, high, dir, body) ->
       Lfor(param, transl_exp ~scopes low, transl_exp ~scopes high, dir,
            event_before ~scopes body (transl_exp ~scopes body))
@@ -1275,6 +1105,284 @@ and transl_record ~scopes loc env fields repres opt_init_expr =
              Array.fold_left update_field (Lvar copy_id) fields)
     end
   end
+
+and transl_arr_comprehension body blocks ~array_kind ~scopes ~loc =
+  let int n = Lconst (Const_base (Const_int n)) in   
+  let empty_arr = 
+    Lprim( (Pmakearray(Pgenarray, Immutable)), [] ,loc) 
+  in 
+  let make_array size init= 
+    let prim_make_arr = 
+      Primitive.simple ~name:"caml_make_vect" ~arity:2 ~alloc:true 
+    in
+    Lprim (Pccall prim_make_arr, [size; init], loc)
+  in
+  let make_array_of_kind kind size =
+    match kind with
+    | Pgenarray -> assert false (*An example is needed to create this array.*)
+    | Pintarray -> make_array size (int 0) 
+    | Paddrarray -> make_array size (int 0)
+    | Pfloatarray -> 
+      let prim_make_float_arr = 
+        Primitive.simple ~name:"caml_make_float_vect" ~arity:1 ~alloc:true 
+      in
+      Lprim (Pccall prim_make_float_arr, [size], loc)
+  in
+  let blit_array src src_pos dst dst_pos len= 
+    let prim_blit_arr = 
+      Primitive.simple ~name:"caml_array_blit" ~arity:5 ~alloc:true 
+    in
+    Lprim (Pccall prim_blit_arr, [src; src_pos; dst; dst_pos; len], loc)
+  in
+  let transl_loop ~type_comp ~body =
+    let len_var = Ident.create_local "len_var" in
+    match type_comp with 
+    | In (pat , e2) -> 
+      let in_ = transl_exp ~scopes e2 in
+      let in_kind = Typeopt.array_kind e2 in
+      let len = Lprim( (Parraylength(in_kind)), [in_], loc) in
+      let index = Ident.create_local "index" in    
+      Lfor(index, (int 0), Lprim(Psubint, [Lvar(len_var); int 1], loc) , Upto, 
+        Matching.for_let ~scopes pat.pat_loc
+          (Lprim(Parrayrefs(in_kind), [in_; Lvar(index)], loc)) pat body), 
+      (len_var,len)
+    | From_to(id, _, e2, e3, dir) ->  
+      let from = (transl_exp ~scopes e2) in
+      let to_ = (transl_exp ~scopes e3) in
+      let low, high = 
+        match dir with 
+        | Upto -> from, to_
+        | Downto -> to_, from in
+      let len = 
+        Lprim(Psubint, 
+          [Lprim(Paddint, [high; int 1], loc);
+          low], loc)
+      in
+      Lfor(id,from, to_, dir, body), (len_var,len)
+  in
+  (*Translates one block into a block of for loops.*)
+  let transl_loops block base_body = 
+    List.fold_left (fun (body, lens) type_comp ->
+      let new_body, new_len = transl_loop ~type_comp ~body in
+      new_body, new_len::lens) 
+    (base_body, []) block
+  in       
+  (* The block created here takes the result of the innerblock and 
+      writes it into the array of arrays (arr).*)
+  let transl_block global_counter  (comp_block, arrs) {clauses; guard;} = 
+    let arr = Ident.create_local "arr_a" in
+    let counter = Ident.create_local "counter" in
+    let body, res_len, array_kind = 
+      match comp_block with
+      | Unguarded (body, Pgenarray) -> 
+        let res_len = Ident.create_local "res_len" in
+        Lsequence(  
+        Lifthenelse(
+          Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], loc),
+          Lassign(arr, make_array (Lvar(res_len)) body),
+          Lprim(Parraysets(Pgenarray), 
+            [Lvar(arr); Lvar(counter); body] ,loc)),
+        Lassign(counter, Lprim(Paddint, [Lvar(counter); int 1], loc))),
+        Some res_len, Pgenarray
+      | Unguarded (body, arr_kind) -> 
+        Lsequence(
+          Lprim(Parraysets(arr_kind),[Lvar(arr); Lvar(counter); body], loc),
+          Lassign(counter, Lprim(Paddint, [Lvar(counter); int 1], loc))),
+        None, arr_kind
+      | Guarded (bdy_and_len, arr_kind, id) -> 
+        let body = Ident.create_local "body" in
+        let len = Ident.create_local "len" in
+        Lstaticcatch(bdy_and_len, (id, [(body, Pgenval); (len, Pintval)]),
+          Lsequence(
+              Lsequence(
+                Lprim(Parraysets(arr_kind),   
+                  [Lvar(arr); Lvar(counter); Lvar(body)], loc),
+                Lprim(Parraysets(arr_kind), 
+                  [Lvar(arr); 
+                  Lprim(Paddint, [Lvar(counter); (int 1)], loc); Lvar(len)],
+                  loc)
+              ),
+            Lassign(counter, Lprim(Paddint, [Lvar(counter); (int 2)], loc)))
+        ), None, arr_kind
+    in
+    let body, arrs = 
+      match guard with
+        | None ->  
+          body, Array_of_arrays(arrs)
+        | Some guard -> 
+          Lifthenelse(
+            (transl_exp ~scopes guard),
+            body,
+            lambda_unit
+          ), Array_of_filtered_arrays(arrs)
+    in
+    let body, lengths = transl_loops clauses body in
+    let block_len = Ident.create_local "block_len" in
+    let body, len = 
+      match global_counter, comp_block with
+      | Some gc, Unguarded _ -> 
+        Lsequence( 
+          body, 
+          Lassign(gc, Lprim(Paddint, [Lvar(counter); Lvar(gc)], loc))),
+        Lvar(block_len)
+      | Some gc, Guarded _ -> 
+        Lsequence( 
+          body, 
+          Lassign(gc, Lprim(Paddint, 
+            [Lvar(gc); 
+            Lprim(Pdivint(Unsafe), [Lvar(counter); int 2], loc)], loc))),
+        Lprim(Pmulint, [Lvar(block_len); int 2], loc)
+      | None, Unguarded _  -> body, Lvar(block_len)
+      | None, Guarded _  -> body, Lprim(Pmulint, [Lvar(block_len); int 2], loc)
+    in
+    let body = 
+      match res_len with
+      | None -> 
+        Llet(Strict, Pgenval, arr, make_array_of_kind array_kind len, 
+          Lsequence(body, Lvar(arr)))
+      | Some res_len -> 
+        Llet(Alias, Pintval, res_len, len, 
+          Llet(Variable, Pgenval, arr, empty_arr, 
+          Lsequence(body, Lvar(arr))))
+    in 
+    let block_len_val = List.fold_left (fun (tot_len) (len_id, _len) ->
+        let new_tot_len = 
+          match tot_len with
+          | None -> Lvar(len_id)
+          | Some tot_len -> Lprim(Pmulint, [Lvar(len_id); tot_len], loc)
+        in
+        Some new_tot_len) 
+      (None) lengths
+    in
+    let body = 
+      Llet(Strict, Pintval, block_len,
+        Option.value block_len_val ~default:(int 0), body) 
+    in
+    let body = List.fold_left (fun body (len_id, len) ->
+        Llet(Strict, Pintval, len_id, len, body))
+      (body) lengths
+    in
+    match guard with
+    | None ->  
+      Unguarded(Llet(Variable, Pintval, counter, int 0, body), Paddrarray),
+      arrs
+    | Some _ -> 
+      let static_return_id = next_raise_count () in
+      Guarded(
+        Llet(Variable, Pintval, counter, int 0,   
+          Lstaticraise(static_return_id, [body; Lvar(counter)])), 
+        Paddrarray, static_return_id),
+      arrs
+  in
+  let transl_concat_arrays arr arr_len arrs res_kind total_len  = 
+    let res = Ident.create_local "res" in
+    let counter = Ident.create_local "counter" in
+    let rec transl_for arr arr_len arrs= 
+      let i = Ident.create_local "i" in 
+      match arrs with
+      | Array_of_elements -> 
+        let blit = 
+        Lsequence(
+          blit_array arr (int 0) (Lvar(res)) (Lvar(counter)) (arr_len),
+          Lassign(counter, Lprim(Paddint, [Lvar(counter); arr_len], loc)))
+        in
+        (*Only create the array in the first iteration if its Pgenarray.*)
+        (match res_kind with 
+        | Pgenarray -> 
+          Lsequence(
+          Lifthenelse(
+            Lprim(Psequand, [
+              Lprim(Pintcomp(Ceq), [Lvar(counter); int 0], loc);
+              (*This check protects from trying to acces an empty array.*)
+              Lprim(Pintcomp(Cne), [arr_len; int 0], loc)], loc),
+            Lassign(res, make_array (Lvar(total_len)) 
+              (Lprim(Parrayrefs(res_kind), [arr; int 0], loc))),
+            lambda_unit),
+          blit)
+        | Pintarray | Pfloatarray | Paddrarray -> blit)
+      | Array_of_arrays(arrs) ->
+        let sub_arr = Ident.create_local "sub_arr" in 
+        let len = 
+          Lprim((Parraylength(Paddrarray)), [Lvar(sub_arr)], loc) 
+        in
+        Lfor(i, int 0, Lprim(Psubint, [arr_len; int 1], loc), Upto, 
+          Llet(Strict, Pgenval, sub_arr,  
+            Lprim(Parrayrefs(Paddrarray), [arr; Lvar(i)], loc),
+            transl_for (Lvar(sub_arr)) len arrs))
+      | Array_of_filtered_arrays(arrs) ->
+        let sub_arr = Ident.create_local "sub_arr" in 
+        let sub_arr_len = Ident.create_local "sub_arr_len" in 
+        Llet(Variable, Pintval, i, int 0,
+        Lwhile(Lprim(Pintcomp(Clt), [Lvar(i); arr_len], loc),
+          Lsequence(
+              Llet(Strict, Pgenval,  sub_arr, 
+                Lprim(Parrayrefs(Paddrarray), [arr; Lvar(i)], loc),
+                Llet(Strict, Pintval, sub_arr_len, 
+                  Lprim(Parrayrefs(Paddrarray), 
+                    [arr; Lprim(Paddint, [Lvar(i); int 1], loc)],
+                    loc),
+                  transl_for (Lvar(sub_arr)) (Lvar(sub_arr_len)) arrs)),
+            Lassign(i, Lprim(Paddint, [Lvar(i); int 2], loc))         
+          )))
+    in 
+    (*Remove the outer most layer. The outermost array would always be of size 
+      one, thats why its always unwrapped (arr, arr_len).*)
+    let arrs = 
+      match arrs with
+      | Array_of_elements -> arrs
+      | Array_of_arrays(arrs) -> arrs
+      | Array_of_filtered_arrays(arrs) -> arrs
+    in
+    match res_kind with
+    | Pgenarray ->
+      Llet(Variable, Pgenval, res, empty_arr,
+        Llet(Variable, Pintval, counter, (int 0),  
+          Lsequence(transl_for arr arr_len arrs, Lvar(res))))
+    | Pintarray | Pfloatarray | Paddrarray as kind -> 
+      Llet(Strict, Pgenval, res, make_array_of_kind kind (Lvar(total_len)),
+        Llet(Variable, Pintval, counter, (int 0),  
+          Lsequence(transl_for arr arr_len arrs, Lvar(res))))
+  in
+  (*The global counter is required when the size of the result array is not 
+    known in advance.*)
+  let global_counter = 
+    if (List.length blocks  = 1) && Option.is_none (List.hd blocks).guard
+    then None
+    else Some(Ident.create_local "global_counter") 
+  in
+  let base_block = 
+    transl_block global_counter 
+      (Unguarded(transl_exp ~scopes  body, array_kind), 
+        Array_of_elements) 
+      (List.hd blocks) 
+  in
+  let translated_blocks, arrs = 
+    List.fold_left 
+      (fun acc el -> 
+        transl_block None acc el ) 
+      base_block (List.tl blocks)
+  in
+  (match translated_blocks, global_counter with 
+  | Unguarded(body, _kind), Some gc ->
+    let arr = Ident.create_local "arr" in 
+    let len = Ident.create_local "len_var" in 
+    Llet(
+      Variable, Pintval, gc, int 0,
+      Llet(Strict, Pgenval, arr, body,
+        Llet(Alias, Pintval, len, 
+          Lprim((Parraylength(Paddrarray)), [Lvar(arr)], loc),
+          transl_concat_arrays (Lvar(arr)) (Lvar(len)) arrs array_kind gc)))
+  | Unguarded(body, _kind), None -> body 
+  | Guarded(body_and_len, _, id), Some gc -> 
+    let body = Ident.create_local "body" in
+    let len = Ident.create_local "len" in
+    let arr = Ident.create_local "arr" in 
+    Llet(
+      Variable, Pintval, gc, int 0,
+      Lstaticcatch(body_and_len, (id, [(body, Pgenval); (len, Pintval)]),
+        Llet(Strict, Pgenval, arr, Lvar(body),
+          transl_concat_arrays (Lvar(arr)) (Lvar(len)) arrs array_kind gc)))
+  | Guarded _, None -> assert false)
 
 and transl_match ~scopes e arg pat_expr_list partial =
   let rewrite_case (val_cases, exn_cases, static_handlers as acc)

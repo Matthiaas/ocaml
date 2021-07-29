@@ -164,7 +164,7 @@ and comprehension =
 and comprehension_clause = 
   | From_to of Ident.t * Parsetree.pattern * 
       expression * expression * direction_flag
-  | In of Ident.t * Parsetree.pattern * expression
+  | In of pattern * expression
 
 and 'k case =
     {
