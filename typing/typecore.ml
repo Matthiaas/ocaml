@@ -5161,7 +5161,7 @@ and type_andops env sarg sands expected_ty =
       pattern_variables := [];
       let new_env = 
         List.fold_right
-          (fun {pv_id; pv_type; pv_loc; pv_as_var; pv_attributes}
+          (fun {pv_id; pv_type; pv_loc; pv_as_var=_; pv_attributes}
               env ->
             Env.add_value pv_id
               { val_type = pv_type;
@@ -5170,9 +5170,9 @@ and type_andops env sarg sands expected_ty =
                 val_loc = pv_loc;
                 val_uid = Uid.mk ~current_unit:(Env.get_unit_name ());
               } env
-              (*Todo: this does not give unnused warnings yet.*)
-              ~check:(fun s -> if pv_as_var then Warnings.Unused_var s
-                else Warnings.Unused_var_strict s))
+              (*Perhaps this should be Unused_var_strict if some of the pattern
+                is used.*)
+              ~check:(fun s -> Warnings.Unused_var s))
         pv body_env
       in
       In(pat, iter), new_env

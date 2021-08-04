@@ -335,3 +335,148 @@ f (fun i j k -> [|string_of_int i|] )
 [[|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]; [|"0"|]; [|"2"|]]
 |}];;
 
+
+(*Make sure stuff is called in correct order/ correct number of times.*)
+
+let var = ref [];;
+let f x = var := x::!var; x;;
+[%%expect{|
+val var : '_weak1 list ref = {contents = []}
+val f : '_weak2 -> '_weak2 = <fun>
+|}];;
+
+let z = [|1;2;3|];;
+[| i  for  i in (f z) |];;
+List.rev !var;;
+[%%expect{|
+val z : int array = [|1; 2; 3|]
+- : int array = [|1; 2; 3|]
+- : int array list = [[|1; 2; 3|]]
+|}];;
+
+var := [];;
+let z = [|1;2;3|];;
+[| i  for  i in (f z) for i = 0 to 1 |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int array = [|1; 2; 3|]
+- : int array = [|1; 2; 3; 1; 2; 3|]
+- : int array list = [[|1; 2; 3|]; [|1; 2; 3|]]
+|}];;
+
+var := [];;
+let z = [|1;2;3|];;
+[| i  for  i in (f z) for i = 0 to 6 when (i mod 2 = 0) |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int array = [|1; 2; 3|]
+- : int array = [|1; 2; 3; 1; 2; 3; 1; 2; 3; 1; 2; 3|]
+- : int array list = [[|1; 2; 3|]; [|1; 2; 3|]; [|1; 2; 3|]; [|1; 2; 3|]]
+|}];;
+
+var := [];;
+let z = [|1;2;3|];;
+[| i  for  i in (f z) and i = 0 to 1 |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int array = [|1; 2; 3|]
+- : int array = [|1; 2; 3; 1; 2; 3|]
+- : int array list = [[|1; 2; 3|]]
+|}];;
+
+var := [];;
+let z = [|1;2;3|];;
+[| i  for  i in (f z) and  i = 0 to 6 when (i mod 2 = 0) |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int array = [|1; 2; 3|]
+- : int array = [|2; 2; 2; 2; 2; 2; 2|]
+- : int array list = [[|1; 2; 3|]]
+|}];;
+
+var := [];;
+let z = [|[|1;2;3|];[|4;5;6|]|];;
+[| i  for  i in (f y) for y in z |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int array array = [|[|1; 2; 3|]; [|4; 5; 6|]|]
+- : int array = [|1; 2; 3; 4; 5; 6|]
+- : int array list = [[|1; 2; 3|]; [|4; 5; 6|]]
+|}];;
+
+
+let var = ref [];;
+let f x = var := x::!var; x;;
+[%%expect{|
+val var : '_weak3 list ref = {contents = []}
+val f : '_weak4 -> '_weak4 = <fun>
+|}];;
+
+let z = [1;2;3];;
+[ i  for  i in (f z) ];;
+List.rev !var;;
+[%%expect{|
+val z : int list = [1; 2; 3]
+- : int list = [1; 2; 3]
+- : int list list = [[1; 2; 3]]
+|}];;
+
+var := [];;
+let z = [1;2;3];;
+[ i  for  i in (f z) for i = 0 to 1 ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int list = [1; 2; 3]
+- : int list = [1; 2; 3; 1; 2; 3]
+- : int list list = [[1; 2; 3]; [1; 2; 3]]
+|}];;
+
+var := [];;
+let z = [1;2;3];;
+[ i  for  i in (f z) for i = 0 to 6 when (i mod 2 = 0) ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int list = [1; 2; 3]
+- : int list = [1; 2; 3; 1; 2; 3; 1; 2; 3; 1; 2; 3]
+- : int list list = [[1; 2; 3]; [1; 2; 3]; [1; 2; 3]; [1; 2; 3]]
+|}];;
+
+var := [];;
+let z = [1;2;3];;
+[ i  for  i in (f z) and i = 0 to 1 ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int list = [1; 2; 3]
+- : int list = [1; 2; 3; 1; 2; 3]
+- : int list list = [[1; 2; 3]]
+|}];;
+
+var := [];;
+let z = [1;2;3];;
+[ i  for  i in (f z) and  i = 0 to 6 when (i mod 2 = 0) ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int list = [1; 2; 3]
+- : int list = [2; 2; 2; 2; 2; 2; 2]
+- : int list list = [[1; 2; 3]]
+|}];;
+
+var := [];;
+let z = [[1;2;3];[4;5;6]];;
+[ i  for  i in (f y) for y in z ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+val z : int list list = [[1; 2; 3]; [4; 5; 6]]
+- : int list = [1; 2; 3; 4; 5; 6]
+- : int list list = [[1; 2; 3]; [4; 5; 6]]
+|}];;

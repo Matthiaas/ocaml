@@ -2241,6 +2241,75 @@ expr:
       { mkuplus ~oploc:$loc($1) $1 $2 }
 ;
 
+basic_expr_:
+  | simple_expr nonempty_llist(labeled_simple_expr)
+      { Pexp_apply($1, $2) }
+ /* | basic_expr_comma_list
+      { Pexp_tuple($1) }*/
+  | mkrhs(constr_longident) simple_expr
+      { Pexp_construct($1, Some $2) }
+  | name_tag simple_expr 
+      { Pexp_variant($1, Some $2) }
+  | e1 = expr op = op(infix_operator) e2 = basic_expr
+      { mkinfix e1 op e2 }
+  | subtractive basic_expr 
+      { mkuminus ~oploc:$loc($1) $1 $2 }
+  | additive basic_expr 
+      { mkuplus ~oploc:$loc($1) $1 $2 }
+  
+basic_expr_attr:
+  | IF ext_attributes seq_expr THEN expr ELSE basic_expr
+      { Pexp_ifthenelse($3, $5, Some $7), $2 }
+  | IF ext_attributes seq_expr THEN basic_expr
+      { Pexp_ifthenelse($3, $5, None), $2 }
+  | WHILE ext_attributes seq_expr DO seq_expr DONE
+      { Pexp_while($3, $5), $2 }
+  | FOR ext_attributes pattern EQUAL seq_expr direction_flag seq_expr DO
+    seq_expr DONE
+      { Pexp_for($3, $5, $7, $6, $9), $2 }
+  | ASSERT ext_attributes simple_expr 
+      { Pexp_assert $3, $2 }
+  | LAZY ext_attributes simple_expr 
+      { Pexp_lazy $3, $2 }
+
+basic_expr: 
+  | simple_expr { $1 }
+  | mkexp(basic_expr_) { $1 }
+  | basic_expr_attr
+      { let desc, attrs = $1 in
+        mkexp_attrs ~loc:$sloc desc attrs }
+  | expr COLONCOLON basic_expr
+      { mkexp_cons ~loc:$sloc $loc($2) (ghexp ~loc:$sloc (Pexp_tuple[$1;$3])) }
+  | mkrhs(label) LESSMINUS basic_expr
+      { mkexp ~loc:$sloc (Pexp_setinstvar($1, $3)) }
+  | simple_expr DOT mkrhs(label_longident) LESSMINUS basic_expr
+      { mkexp ~loc:$sloc (Pexp_setfield($1, $3, $5)) }
+  | simple_expr DOT LPAREN seq_expr RPAREN LESSMINUS basic_expr
+      { array_set ~loc:$sloc $1 $4 $7 }
+  | simple_expr DOT LBRACKET seq_expr RBRACKET LESSMINUS basic_expr
+      { string_set ~loc:$sloc $1 $4 $7 }
+  | simple_expr DOT LBRACE expr RBRACE LESSMINUS basic_expr
+      { bigarray_set ~loc:$sloc $1 $4 $7 }
+  | simple_expr DOTOP LBRACKET expr_semi_list RBRACKET LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc lident bracket $2 $1 $4 $7 }
+  | simple_expr DOTOP LPAREN expr_semi_list RPAREN LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc lident paren $2 $1 $4 $7 }
+  | simple_expr DOTOP LBRACE expr_semi_list RBRACE LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc lident brace $2 $1 $4 $7 }
+  | simple_expr DOT mod_longident DOTOP LBRACKET expr_semi_list RBRACKET
+      LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc (ldot $3) bracket $4 $1 $6 $9 }
+  | simple_expr DOT mod_longident DOTOP LPAREN expr_semi_list RPAREN
+      LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc (ldot $3) paren $4 $1 $6 $9  }
+  | simple_expr DOT mod_longident DOTOP LBRACE expr_semi_list RBRACE
+      LESSMINUS basic_expr
+      { dotop_set ~loc:$sloc (ldot $3) brace $4 $1 $6 $9 }
+  | expr attribute
+      { Exp.attr $1 $2 }
+  | UNDERSCORE
+     { not_expecting $loc($1) "wildcard \"_\"" }
+  
 simple_expr:
   | LPAREN seq_expr RPAREN
       { reloc_exp ~loc:$sloc $2 }
@@ -2324,10 +2393,10 @@ comprehension_block:
 
 
 %inline comprehension_expr:
-| LBRACKET simple_expr FOR 
+| LBRACKET basic_expr FOR 
     separated_nonempty_llist(FOR, comprehension_block) RBRACKET
       { Pexp_list_comprehension($2, $4) }
-| LBRACKETBAR simple_expr FOR 
+| LBRACKETBAR basic_expr FOR 
     separated_nonempty_llist(FOR, comprehension_block) BARRBRACKET
       { Pexp_arr_comprehension($2, $4) }
 
@@ -2570,6 +2639,10 @@ fun_def:
   es = separated_nontrivial_llist(COMMA, expr)
     { es }
 ;
+/*%inline basic_expr_comma_list:
+  es = nonempty_llist(terminated(expr, COMMA)) basic_expr
+    { es }
+;*/
 record_expr_content:
   eo = ioption(terminated(simple_expr, WITH))
   fields = separated_or_terminated_nonempty_list(SEMI, record_expr_field)

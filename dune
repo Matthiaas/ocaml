@@ -68,7 +68,8 @@
 
    ;; lambda/
    debuginfo lambda matching printlambda runtimedef simplif switch
-   translattribute translclass translcore translmod translobj translprim
+   translattribute translclass translcomprehension translcore translmod 
+   translobj translprim
 
    ;; bytecomp/
    meta opcodes bytesections dll symtable
