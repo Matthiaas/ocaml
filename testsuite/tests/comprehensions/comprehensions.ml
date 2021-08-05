@@ -481,3 +481,74 @@ val z : int list list = [[1; 2; 3]; [4; 5; 6]]
 - : int list = [1; 2; 3; 4; 5; 6]
 - : int list list = [[1; 2; 3]; [4; 5; 6]]
 |}];;
+
+let var = ref [];;
+let f x = var := x::!var; x;;
+[%%expect{|
+val var : '_weak5 list ref = {contents = []}
+val f : '_weak6 -> '_weak6 = <fun>
+|}];;
+
+
+var := [];;
+[ i  for i = (f 0) to (f 5) ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int list = [0; 1; 2; 3; 4; 5]
+- : int list = [0; 5]
+|}];;
+
+var := [];;
+[ i  for i = (f 0) to (f 5) and j = (f 3) to (f 4) ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int list = [0; 1; 2; 3; 4; 5; 0; 1; 2; 3; 4; 5]
+- : int list = [3; 4; 0; 5]
+|}];;
+
+var := [];;
+[ i  for i = (f 0) to (f 5) for j = (f 3) to (f 4) ];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int list = [0; 1; 2; 3; 4; 5; 0; 1; 2; 3; 4; 5]
+- : int list = [3; 4; 0; 5; 0; 5]
+|}];;
+
+var := [];;
+[| i  for i = (f 0) to (f 5) |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int array = [|0; 1; 2; 3; 4; 5|]
+- : int list = [0; 5]
+|}];;
+
+var := [];;
+[| i  for i = (f 0) to (f 5) and j = (f 3) to (f 4)  |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int array = [|0; 1; 2; 3; 4; 5; 0; 1; 2; 3; 4; 5|]
+- : int list = [3; 4; 0; 5]
+|}];;
+
+var := [];;
+[| i  for i = (f 0) to (f 5) for j = (f 3) to (f 4)  |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int array = [|0; 1; 2; 3; 4; 5; 0; 1; 2; 3; 4; 5|]
+- : int list = [3; 4; 0; 5; 0; 5]
+|}];;
+
+var := [];;
+[| i  for i = (f 5) downto (f 0) for j = (f 3) to (f 4) |];;
+List.rev !var;;
+[%%expect{|
+- : unit = ()
+- : int array = [|5; 4; 3; 2; 1; 0; 5; 4; 3; 2; 1; 0|]
+- : int list = [3; 4; 5; 0; 5; 0]
+|}];;

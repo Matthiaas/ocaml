@@ -2311,9 +2311,9 @@ simple_expr:
 ;
 
 comprehension_clause:
-|  ext_attributes pattern EQUAL simple_expr direction_flag simple_expr
+|  ext_attributes pattern EQUAL expr direction_flag expr
       { Extensions.From_to($2, $4, $6, $5) }
-|  ext_attributes pattern IN simple_expr { Extensions.In($2, $4) }
+|  ext_attributes pattern IN expr { Extensions.In($2, $4) }
 ;
 
 comprehension_tail(bracket):

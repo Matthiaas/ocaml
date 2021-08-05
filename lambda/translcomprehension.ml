@@ -39,7 +39,7 @@ let blit_array src src_pos dst dst_pos len ~loc=
   in
   Lprim (Pccall prim_blit_arr, [src; src_pos; dst; dst_pos; len], loc)
 
-let transl_loop ~type_comp ~body ~scopes ~loc  ~transl_exp  =
+let transl_loop ~type_comp ~body ~scopes ~loc  ~transl_exp ~mats  =
   let len_var = Ident.create_local "len_var" in
   match type_comp with
   | In (pat , e2) ->
@@ -48,33 +48,34 @@ let transl_loop ~type_comp ~body ~scopes ~loc  ~transl_exp  =
     let in_kind = Typeopt.array_kind e2 in
     let len = Lprim( (Parraylength(in_kind)), [Lvar(in_var)], loc) in
     let index = Ident.create_local "index" in
+    let mats = (in_var, in_)::mats in
     Lfor(index, (int 0), Lprim(Psubint, [Lvar(len_var); int 1], loc) , Upto,
       Matching.for_let ~scopes pat.pat_loc
         (Lprim(Parrayrefs(in_kind),
-          [Lvar(in_var); Lvar(index)], loc)) pat body),
-    (*(in_var, in_) needs to be retunred s.t. it can be materialized early enough
-      s.t. it is only materialized once for each call of a block.*)
-    (len_var,len), Some (in_var, in_)
+          [Lvar(in_var); Lvar(index)], loc)) pat body), (len_var,len), mats
+    
   | From_to(id, _, e2, e3, dir) ->
     let from = transl_exp ~scopes e2 in
     let to_ = transl_exp ~scopes e3 in
+    let from_var = Ident.create_local "from" in 
+    let to_var = Ident.create_local "to_" in 
+    let mats = (from_var, from)::(to_var, to_)::mats in
     let low, high =
       match dir with
-      | Upto -> from, to_
-      | Downto -> to_, from in
+      | Upto -> Lvar(from_var), Lvar(to_var)
+      | Downto -> Lvar(to_var), Lvar(from_var) in
     let len =
       Lprim(Psubint,
         [Lprim(Paddint, [high; int 1], loc);
         low], loc)
     in
-    Lfor(id,from, to_, dir, body), (len_var,len), None
+    Lfor(id,Lvar(from_var), Lvar(to_var), dir, body), (len_var,len), mats
 
 let transl_loops block base_body ~loc ~scopes  ~transl_exp  =
   List.fold_left (fun (body, lens, mats) type_comp ->
-    let new_body, new_len, mat =
-      transl_loop  ~transl_exp ~type_comp ~body ~scopes ~loc
+    let new_body, new_len, mats =
+      transl_loop  ~transl_exp ~type_comp ~body ~scopes ~loc ~mats
     in
-    let mats = match mat with | None -> mats | Some mat -> mat::mats in
     new_body, new_len::lens, mats)
   (base_body, [], []) block
 
@@ -173,9 +174,9 @@ let transl_block global_counter  (comp_block, arrs) {clauses; guard;}
       Llet(Strict, Pintval, len_id, len, body))
     (body) lengths
   in
-  let body = List.fold_left (fun body (id, arr) ->
+  let body = List.fold_right (fun (id, arr) body ->
     Llet(Strict, Pgenval, id, arr, body))
-    (body) materialize
+    materialize body
   in
   match guard with
   | None ->
@@ -317,8 +318,13 @@ let transl_list_comp type_comp body acc_var mats ~transl_exp ~scopes ~loc =
     match type_comp with
     | From_to (param, _,e2,e3, dir) ->
       let pval = Pintval in
-      let args = [transl_exp ~scopes e2; transl_exp ~scopes e3; Lvar(new_acc)] in
+      let from_var = Ident.create_local "from" in 
+      let to_var = Ident.create_local "to_" in 
+      let args = [Lvar(from_var); Lvar(to_var); Lvar(new_acc)] in
       let func = from_to_comp_prim ~dir in
+      let mats = 
+        (from_var, transl_exp ~scopes e2)::(to_var, transl_exp ~scopes e3)::mats 
+      in
       param, pval, args, func, body, mats
     | In (pat, _in) ->
       let pat_id = Ident.create_local "pat" in
@@ -370,9 +376,9 @@ let transl_list_comprehension body blocks ~scopes ~loc ~transl_exp  =
             transl_list_comp ~transl_exp ~scopes ~loc el body acc_var mats)
           (body, acc_var, []) block.clauses
         in
-        let body = List.fold_left (fun body (id, arr) ->
+        let body = List.fold_right (fun (id, arr) body ->
           Llet(Strict, Pgenval, id, arr, body))
-          (body) materialize
+          materialize (body) 
         in
         body, acc_var)
     (bdy, acc_var) blocks
