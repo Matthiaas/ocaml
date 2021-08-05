@@ -19,4 +19,4 @@ and comprehension_clause =
 | In of pattern * expression
 
 val payload_of_extension_expr: loc:Warnings.loc -> extension_expr -> extension
-val extension_expr_of_payload: extension -> extension_expr
+val extension_expr_of_payload: loc:Warnings.loc -> extension -> extension_expr

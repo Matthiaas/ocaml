@@ -122,6 +122,7 @@ type error =
   | Unrefuted_pattern of pattern
   | Invalid_extension_constructor_payload
   | Not_an_extension_constructor
+  | Extension_not_enabled of Clflags.extension
   | Literal_overflow of string
   | Unknown_literal of string * char
   | Illegal_letrec_pat
@@ -3711,8 +3712,12 @@ and type_expect_
       | Pexp_extension (({ txt = ("extension.list_comprehension"
                                 | "extension.arr_comprehension"); _ },
                         _ ) as extension)  ->
-        let ext_expr = Extensions.extension_expr_of_payload extension in
-        type_extension ~loc ~env ~ty_expected ~sexp ext_expr
+        if Clflags.is_extension_enabled Clflags.Comprehensions then
+          let ext_expr = Extensions.extension_expr_of_payload ~loc extension in
+          type_extension ~loc ~env ~ty_expected ~sexp ext_expr
+        else
+          raise
+            (Error (loc, env, Extension_not_enabled(Clflags.Comprehensions)))
   | Pexp_extension ext ->
       raise (Error_forward (Builtin_attributes.error_of_extension ext))
 
@@ -5657,6 +5662,10 @@ let report_error ~loc env = function
   | Not_an_extension_constructor ->
       Location.errorf ~loc
         "This constructor is not an extension constructor."
+  | Extension_not_enabled(ext) ->
+    let name = Clflags.string_of_extension ext in
+    Location.errorf ~loc
+        "Extension \"%s\" must be enabled to use this feature." name
   | Literal_overflow ty ->
       Location.errorf ~loc
         "Integer literal exceeds the range of representable integers of type %s"
