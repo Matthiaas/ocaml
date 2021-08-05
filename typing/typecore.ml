@@ -596,8 +596,8 @@ let split_cases env cases =
                     Mixed_value_and_exception_patterns_under_guard))
     | vp, ep -> add_case vals case vp, add_case exns case ep
   ) cases ([], [])
- 
-let type_for_loop_index ~loc ~env ~param ty= 
+
+let type_for_loop_index ~loc ~env ~param ty=
   match param.ppat_desc with
   | Ppat_any -> Ident.create_local "_for", env
   | Ppat_var {txt} ->
@@ -2172,7 +2172,7 @@ let rec is_nonexpansive exp =
   | Texp_setfield _
   | Texp_while _
   | Texp_list_comprehension _
-  | Texp_arr_comprehension _  
+  | Texp_arr_comprehension _
   | Texp_for _
   | Texp_send _
   | Texp_instvar _
@@ -2385,10 +2385,10 @@ let check_partial_application statement exp =
             | Texp_construct _ | Texp_variant _ | Texp_record _
             | Texp_field _ | Texp_setfield _ | Texp_array _
             | Texp_while _ | Texp_list_comprehension _
-            | Texp_arr_comprehension _ | Texp_for _ 
-            | Texp_instvar _|  Texp_setinstvar _ | Texp_override _ 
-            | Texp_assert _ | Texp_lazy _ | Texp_object _ | Texp_pack _ 
-            | Texp_unreachable | Texp_extension_constructor _ 
+            | Texp_arr_comprehension _ | Texp_for _
+            | Texp_instvar _|  Texp_setinstvar _ | Texp_override _
+            | Texp_assert _ | Texp_lazy _ | Texp_object _ | Texp_pack _
+            | Texp_unreachable | Texp_extension_constructor _
             | Texp_ifthenelse (_, _, None) | Texp_function _ ->
                 check_statement ()
             | Texp_match (_, cases, _) ->
@@ -3087,53 +3087,13 @@ and type_expect_
         exp_type = instance Predef.type_unit;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
-  | Pexp_list_comprehension (sbody, comp_typell) ->  
-    if !Clflags.principal then begin_def ();
-    let without_list_ty = Ctype.newvar ()  in
-    unify_exp_types loc env 
-      (instance (Predef.type_list without_list_ty)) (instance ty_expected);
-    if !Clflags.principal then begin 
-      end_def();
-      generalize_structure without_list_ty; 
-    end;
-    let comp_type, new_env = 
-      type_comprehension_list
-        ~loc ~env ~container_type:Predef.type_list ~comp_typell
-    in
-    let body = type_expect new_env sbody (mk_expected without_list_ty) in
-    re {
-      exp_desc = Texp_list_comprehension (body, comp_type);
-      exp_loc = loc; exp_extra = [];
-      exp_type = instance (Predef.type_list body.exp_type);
-      exp_attributes = sexp.pexp_attributes;
-      exp_env = env }
-  | Pexp_arr_comprehension (sbody, comp_typell) -> 
-    if !Clflags.principal then begin_def ();
-    let without_arr_ty = Ctype.newvar ()  in
-    unify_exp_types loc env 
-      (instance (Predef.type_array without_arr_ty)) (instance ty_expected);
-    if !Clflags.principal then begin 
-      end_def();
-      generalize_structure without_arr_ty; 
-    end;
-    let comp_type, new_env = 
-      type_comprehension_list
-        ~loc ~env ~container_type:Predef.type_array ~comp_typell
-    in
-    let body = type_expect new_env sbody (mk_expected without_arr_ty) in 
-    re {
-      exp_desc = Texp_arr_comprehension (body, comp_type);
-      exp_loc = loc; exp_extra = [];
-      exp_type = instance (Predef.type_array body.exp_type);
-      exp_attributes = sexp.pexp_attributes;
-      exp_env = env }
 | Pexp_for(param, slow, shigh, dir, sbody) ->
       let low = type_expect env slow
           (mk_expected ~explanation:For_loop_start_index Predef.type_int) in
       let high = type_expect env shigh
           (mk_expected ~explanation:For_loop_stop_index Predef.type_int) in
-      let id, new_env = 
-        type_for_loop_index ~loc ~env ~param  Predef.type_int 
+      let id, new_env =
+        type_for_loop_index ~loc ~env ~param  Predef.type_int
       in
       let body = type_statement ~explanation:For_loop_body new_env sbody in
       rue {
@@ -3748,6 +3708,11 @@ and type_expect_
       | _ ->
           raise (Error (loc, env, Invalid_extension_constructor_payload))
       end
+      | Pexp_extension (({ txt = ("extension.list_comprehension"
+                                | "extension.arr_comprehension"); _ },
+                        _ ) as extension)  ->
+        let ext_expr = Extensions.extension_expr_of_payload extension in
+        type_extension ~loc ~env ~ty_expected ~sexp ext_expr
   | Pexp_extension ext ->
       raise (Error_forward (Builtin_attributes.error_of_extension ext))
 
@@ -5135,38 +5100,79 @@ and type_andops env sarg sands expected_ty =
   in
   let let_arg, rev_ands = loop env sarg (List.rev sands) expected_ty in
   let_arg, List.rev rev_ands
-    
+
+  and type_extension ~loc ~env ~ty_expected ~sexp = function
+  | Extensions.Eexp_list_comprehension (sbody, comp_typell) ->
+    if !Clflags.principal then begin_def ();
+    let without_list_ty = Ctype.newvar ()  in
+    unify_exp_types loc env
+      (instance (Predef.type_list without_list_ty)) (instance ty_expected);
+    if !Clflags.principal then begin
+      end_def();
+      generalize_structure without_list_ty;
+    end;
+    let comp_type, new_env =
+      type_comprehension_list
+        ~loc ~env ~container_type:Predef.type_list ~comp_typell
+    in
+    let body = type_expect new_env sbody (mk_expected without_list_ty) in
+    re {
+      exp_desc = Texp_list_comprehension (body, comp_type);
+      exp_loc = loc; exp_extra = [];
+      exp_type = instance (Predef.type_list body.exp_type);
+      exp_attributes = sexp.pexp_attributes;
+      exp_env = env }
+  | Extensions.Eexp_arr_comprehension (sbody, comp_typell) ->
+    if !Clflags.principal then begin_def ();
+    let without_arr_ty = Ctype.newvar ()  in
+    unify_exp_types loc env
+      (instance (Predef.type_array without_arr_ty)) (instance ty_expected);
+    if !Clflags.principal then begin
+      end_def();
+      generalize_structure without_arr_ty;
+    end;
+    let comp_type, new_env =
+      type_comprehension_list
+        ~loc ~env ~container_type:Predef.type_array ~comp_typell
+    in
+    let body = type_expect new_env sbody (mk_expected without_arr_ty) in
+    re {
+      exp_desc = Texp_arr_comprehension (body, comp_type);
+      exp_loc = loc; exp_extra = [];
+      exp_type = instance (Predef.type_array body.exp_type);
+      exp_attributes = sexp.pexp_attributes;
+      exp_env = env }
 
   and type_comprehension_clause ~body_env ~env ~loc ~container_type
-      ~(comp_type : Parsetree.comprehension_clause) = 
-    let comp, env = match comp_type with 
-    | From_to (param, slow, shigh, dir) -> 
+      ~(comp_type : Extensions.comprehension_clause) =
+    let comp, env = match comp_type with
+    | From_to (param, slow, shigh, dir) ->
       let low = type_expect env slow
           (mk_expected ~explanation:For_loop_start_index Predef.type_int) in
       let high = type_expect env shigh
           (mk_expected ~explanation:For_loop_stop_index Predef.type_int) in
-      let id, new_env = 
-        type_for_loop_index ~loc ~env:body_env ~param  Predef.type_int 
+      let id, new_env =
+        type_for_loop_index ~loc ~env:body_env ~param  Predef.type_int
       in
       From_to(id, param, low, high, dir), new_env
-    | In (param, siter) ->  
+    | In (param, siter) ->
       let item_ty = newvar() in
       let iter_ty = instance (container_type item_ty) in
-      let iter = type_expect env siter 
+      let iter = type_expect env siter
           (mk_expected ~explanation:In_comprehension_argument iter_ty) in
       let pat =
-        type_pat Value ~no_existentials:In_self_pattern (ref env) param item_ty 
+        type_pat Value ~no_existentials:In_self_pattern (ref env) param item_ty
       in
       let pv = !pattern_variables in
       pattern_variables := [];
-      let new_env = 
+      let new_env =
         List.fold_right
           (fun {pv_id; pv_type; pv_loc; pv_as_var=_; pv_attributes}
               env ->
             Env.add_value pv_id
               { val_type = pv_type;
                 val_attributes = pv_attributes;
-                val_kind = Val_reg; (*Todo: what is this?*)
+                val_kind = Val_reg;
                 val_loc = pv_loc;
                 val_uid = Uid.mk ~current_unit:(Env.get_unit_name ());
               } env
@@ -5179,34 +5185,34 @@ and type_andops env sarg sands expected_ty =
     in
     comp, env
 
-  and type_comprehension_block ~env ~loc 
-      ~comp:({clauses; guard} :  Parsetree.comprehension) ~container_type  =
+  and type_comprehension_block ~env ~loc
+      ~comp:({clauses; guard} :  Extensions.comprehension) ~container_type  =
     let new_comps, new_env  = List.fold_right
-      (fun comp_type (comps, body_env)-> 
+      (fun comp_type (comps, body_env)->
         let comp, new_env =
-          type_comprehension_clause ~body_env ~env ~loc  
+          type_comprehension_clause ~body_env ~env ~loc
             ~container_type ~comp_type in
-        comp::comps, new_env) 
+        comp::comps, new_env)
       clauses
-      ([], env)   
-    in      
-    let new_guard = Option.map (fun gu -> type_expect new_env gu 
+      ([], env)
+    in
+    let new_guard = Option.map (fun gu -> type_expect new_env gu
       (mk_expected ~explanation:When_guard Predef.type_bool)) guard in
-    {clauses=new_comps; guard=new_guard}, new_env 
+    {clauses=new_comps; guard=new_guard}, new_env
 
-  and type_comprehension_list ~loc ~env ~container_type ~comp_typell = 
-    let comps, new_env = List.fold_right 
-      (fun (comp) (comps, env) -> 
-          let new_comps, new_env  = 
-            type_comprehension_block 
+  and type_comprehension_list ~loc ~env ~container_type ~comp_typell =
+    let comps, new_env = List.fold_right
+      (fun (comp) (comps, env) ->
+          let new_comps, new_env  =
+            type_comprehension_block
               ~env ~loc ~comp ~container_type
           in
           new_comps::comps, new_env
-      ) 
-      comp_typell ([], env) 
+      )
+      comp_typell ([], env)
     in
     comps, new_env
-  
+
 (* Typing of toplevel bindings *)
 
 let type_binding env rec_flag spat_sexp_list =
@@ -5317,7 +5323,7 @@ let report_type_expected_explanation expl ppf =
       because "the condition of a while-loop"
   | While_loop_body ->
       because "the body of a while-loop"
-  | In_comprehension_argument -> 
+  | In_comprehension_argument ->
     because "the iteration argument of a comprehension"
   | For_loop_start_index ->
       because "a for-loop start index"

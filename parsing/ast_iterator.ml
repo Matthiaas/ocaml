@@ -342,19 +342,6 @@ module E = struct
   let iter sub {pexp_loc = loc; pexp_desc = desc; pexp_attributes = attrs} =
     sub.location sub loc;
     sub.attributes sub attrs;
-    let iter_comprehension comp_types= 
-      (List.iter (fun {clauses; guard} -> 
-        List.iter (fun comp_type ->
-          match comp_type with
-          | From_to (p, e2, e3, _d) ->
-            sub.pat sub p; sub.expr sub e2;
-        sub.expr sub e3
-          | In (p, e2) -> 
-          sub.pat sub p; sub.expr sub e2;
-        )clauses;
-        Option.iter (fun g -> sub.expr sub g) guard) 
-      comp_types)
-    in
     match desc with
     | Pexp_ident x -> iter_loc sub x
     | Pexp_constant _ -> ()
@@ -392,10 +379,6 @@ module E = struct
         sub.expr sub e1; sub.expr sub e2
     | Pexp_while (e1, e2) ->
         sub.expr sub e1; sub.expr sub e2
-    | Pexp_list_comprehension (e1, comp_types) ->
-      sub.expr sub e1; iter_comprehension comp_types
-    | Pexp_arr_comprehension (e1, comp_types) ->
-      sub.expr sub e1; iter_comprehension comp_types
     | Pexp_for (p, e1, e2, _d, e3) ->
         sub.pat sub p; sub.expr sub e1; sub.expr sub e2;
         sub.expr sub e3

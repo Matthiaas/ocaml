@@ -381,21 +381,6 @@ module E = struct
     let open Exp in
     let loc = sub.location sub loc in
     let attrs = sub.attributes sub attrs in
-    let map_comprehension comp_types= 
-      (List.map (fun {clauses; guard}  -> 
-        let clauses =   
-          List.map (fun comp_type ->
-            match comp_type with
-            | From_to (p, e2, e3, dir) ->
-              From_to(sub.pat sub p, sub.expr sub e2,
-            sub.expr sub e3, dir)
-            | In (p, e2) -> 
-            In(sub.pat sub p, sub.expr sub e2)
-          ) clauses 
-        in
-        {clauses; guard=(Option.map (sub.expr sub) guard)}
-      ) comp_types)
-    in
     match desc with
     | Pexp_ident x -> ident ~loc ~attrs (map_loc sub x)
     | Pexp_constant x -> constant ~loc ~attrs (sub.constant sub x)
@@ -432,12 +417,6 @@ module E = struct
         sequence ~loc ~attrs (sub.expr sub e1) (sub.expr sub e2)
     | Pexp_while (e1, e2) ->
         while_ ~loc ~attrs (sub.expr sub e1) (sub.expr sub e2)
-    | Pexp_list_comprehension (e1, comp_types) -> 
-      list_comprehension 
-        ~loc ~attrs (sub.expr sub e1) (map_comprehension comp_types)
-    | Pexp_arr_comprehension (e1, comp_types)->
-      arr_comprehension
-        ~loc ~attrs (sub.expr sub e1) (map_comprehension comp_types)  
     | Pexp_for (p, e1, e2, d, e3) ->
         for_ ~loc ~attrs (sub.pat sub p) (sub.expr sub e1) (sub.expr sub e2) d
           (sub.expr sub e3)
