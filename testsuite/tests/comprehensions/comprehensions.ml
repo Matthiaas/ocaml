@@ -532,7 +532,7 @@ List.rev !var;;
 [%%expect{|
 - : unit = ()
 - : int array = [|0; 1; 2; 3; 4; 5; 0; 1; 2; 3; 4; 5|]
-- : int list = [3; 4; 0; 5]
+- : int list = [0; 5; 3; 4]
 |}];;
 
 var := [];;
