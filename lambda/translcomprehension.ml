@@ -81,28 +81,25 @@ let iterate_arr_block ~transl_exp ~loc ~scopes
     | Some guard ->
       Lifthenelse(transl_exp ~scopes guard, body, lambda_unit)
   in
-  let body, lengths, rev_bindings =
+  let body, length_opt, bindings =
     List.fold_left
-      (fun (body, lengths, rev_bindings) clause ->
+      (fun (body, length, bindings) clause ->
          let new_bindings, new_length_var, body =
            transl_arr_clause ~transl_exp ~scopes ~loc clause body
          in
-         let rev_bindings = List.rev_append new_bindings rev_bindings in
-         let lengths = new_length_var :: lengths in
-         body, lengths, rev_bindings)
-      (body, [], []) clauses
-  in
-  let length_opt =
-    List.fold_left
-      (fun length var ->
-         match length with
-         | None -> Some (Lvar var)
-         | Some length -> Some (Lprim(Pmulint, [Lvar var; length], loc)))
-      None lengths
+         let rev_bindings = new_bindings @ bindings in
+         let length =
+           match length with
+           | None -> Lvar new_length_var
+           | Some length ->
+               Lprim(Pmulint, [Lvar new_length_var; length], loc)
+         in
+         body, Some length, rev_bindings)
+      (body, None, []) clauses
   in
   let length = Option.value length_opt ~default:(int 0) in
   let length_binding = binding Alias Pintval length_var length in
-  let bindings = List.rev_append rev_bindings [length_binding] in
+  let bindings = List.append bindings [length_binding] in
   bindings, body
 
 let make_array_prim ~loc size init =
@@ -173,9 +170,7 @@ let init_array_elems ~loc ~kind ~size ~array ~index ~src ~len =
       in
       Lsequence(
         Lifthenelse(is_first_iteration,
-          Lifthenelse(is_not_empty,
-                      Lsequence(make_array, blit),
-                      lambda_unit),
+          Lifthenelse(is_not_empty, make_array, lambda_unit),
           lambda_unit),
         blit)
   | Pintarray | Paddrarray | Pfloatarray -> blit
